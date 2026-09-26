@@ -47,6 +47,7 @@ const channels = ref<Channel[]>([
 ])
 const suggestions = ref<Suggestion[]>([])
 let feedTimer: number | undefined
+let errorTimer: number | undefined
 const composer = ref<HTMLTextAreaElement | null>(null)
 const state = reactive({
   theme: 'feather.default',
@@ -104,6 +105,7 @@ function receive(event: MessageEvent) {
     open.value = false
     input.value = ''
     error.value = ''
+    window.clearTimeout(errorTimer)
   } else if (message.type === 'chat:visibility') {
     visible.value = message.visible === true
   } else if (message.type === 'chat:bootstrap' && message.config) {
@@ -125,6 +127,8 @@ function receive(event: MessageEvent) {
         : channels.value[0]?.channelKey || 'local.say'
     }
   } else if (message.type === 'chat:message' && message.message) {
+    error.value = ''
+    window.clearTimeout(errorTimer)
     if (!messages.value.some((item) => item.messageId === message.message.messageId)) {
       messages.value.push(message.message)
       while (messages.value.length > 100) messages.value.shift()
@@ -136,6 +140,10 @@ function receive(event: MessageEvent) {
     }, state.layout.fadeDelayMs)
   } else if (message.type === 'chat:error') {
     error.value = typeof message.message === 'string' ? message.message : 'Message was not accepted.'
+    window.clearTimeout(errorTimer)
+    errorTimer = window.setTimeout(() => {
+      error.value = ''
+    }, Math.min(state.layout.fadeDelayMs, 5000))
     feedVisible.value = true
     window.clearTimeout(feedTimer)
     feedTimer = window.setTimeout(() => {
@@ -189,6 +197,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.clearTimeout(feedTimer)
+  window.clearTimeout(errorTimer)
   window.removeEventListener('message', receive)
   window.removeEventListener('keydown', keydown)
 })
