@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - name: Set up Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install UI dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ./web
+      - name: Validate and build UI
+        run: pnpm check
+        working-directory: ./web
+      - name: Package resource
+        uses: vimtor/action-zip@v1
+        with:
+          files: fxmanifest.lua LICENSE README.md config.lua client server shared ui
+          recursive: false
+          dest: feather-chat.zip
+      - name: Read package version
+        id: package-version
+        uses: martinbeentjes/npm-get-version-action@main
+        with:
+          path: web
+      - name: Publish automatic release
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: ${{ steps.package-version.outputs.current-version }}
+          prerelease: false
+          title: Release ${{ steps.package-version.outputs.current-version }}
+          files: feather-chat.zip
