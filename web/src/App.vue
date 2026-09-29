@@ -11,6 +11,7 @@ type Layout = {
   density: string
   fontScale: number
   reducedMotion: boolean
+  timestamps: boolean
 }
 
 type ChatMessage = {
@@ -23,6 +24,17 @@ type ChatMessage = {
   presentation: { variant: string; accentToken: string }
   createdAt: string
   sequence: number
+}
+
+type Theme = {
+  themeKey: string
+  schemaVersion: number
+  typography: { family: 'default' | 'system'; lineHeight: number }
+  surface: { background: string; panel: string; border: string }
+  text: { primary: string; muted: string; danger: string }
+  channelTokens: Record<string, string>
+  shape: { radius: number; borderWidth: number }
+  motion: { enabled: boolean; durationMs: number }
 }
 
 type SubmitResult = { ok: boolean; message?: string }
@@ -38,6 +50,7 @@ const selectedChannel = ref('local.say')
 const messages = ref<ChatMessage[]>([])
 const error = ref('')
 const submitting = ref(false)
+const unreadMessages = ref(0)
 const channels = ref<Channel[]>([
   { channelKey: 'local.say', label: 'Say' },
   { channelKey: 'local.whisper', label: 'Whisper' },
@@ -49,21 +62,41 @@ const suggestions = ref<Suggestion[]>([])
 let feedTimer: number | undefined
 let errorTimer: number | undefined
 const composer = ref<HTMLTextAreaElement | null>(null)
+const messageList = ref<HTMLOListElement | null>(null)
 const state = reactive({
   theme: 'feather.default',
+  themeDocument: undefined as Theme | undefined,
   layout: {
     anchor: 'top-left', widthVw: 38, maxHeightVh: 28,
     density: 'comfortable', fadeDelayMs: 7000, idleOpacity: 0.75,
-    fontScale: 1, reducedMotion: false,
+    fontScale: 1, reducedMotion: false, timestamps: true,
   } as Layout,
 })
 
-const shellStyle = computed(() => ({
-  '--chat-width': `${state.layout.widthVw}vw`,
-  '--chat-height': `${state.layout.maxHeightVh}vh`,
-  '--chat-font-scale': String(state.layout.fontScale),
-  '--chat-idle-opacity': String(state.layout.idleOpacity),
-}))
+const shellStyle = computed(() => {
+  const theme = state.themeDocument
+  return {
+    '--chat-width': `${state.layout.widthVw}vw`,
+    '--chat-height': `${state.layout.maxHeightVh}vh`,
+    '--chat-font-scale': String(state.layout.fontScale),
+    '--chat-idle-opacity': String(state.layout.idleOpacity),
+    '--surface': theme?.surface.background,
+    '--panel': theme?.surface.panel,
+    '--border': theme?.surface.border,
+    '--text': theme?.text.primary,
+    '--muted': theme?.text.muted,
+    '--danger': theme?.text.danger,
+    '--chat-radius': theme ? `${theme.shape.radius}px` : undefined,
+    '--chat-border-width': theme ? `${theme.shape.borderWidth}px` : undefined,
+    '--chat-motion-duration': theme ? `${theme.motion.durationMs}ms` : undefined,
+    '--chat-line-height': theme ? String(theme.typography.lineHeight) : undefined,
+    '--chat-body-family': theme?.typography.family === 'system'
+      ? 'system-ui, sans-serif'
+      : "Georgia, 'Times New Roman', serif",
+  }
+})
+const motionReduced = computed(() => state.layout.reducedMotion
+  || state.themeDocument?.motion.enabled === false)
 const matchingSuggestions = computed(() => {
   if (!input.value.startsWith('/')) return []
   const token = input.value.split(/\s/, 1)[0].toLowerCase()
@@ -78,12 +111,65 @@ const selectedFilterLabel = computed(() => channels.value
 function selectFilter(channelKey: string) {
   selectedFilter.value = channelKey
   selectedChannel.value = channelKey === 'all' ? 'local.say' : channelKey
+  unreadMessages.value = 0
+  void scrollFeedToBottom()
 }
 
 function messageChannelLabel(message: ChatMessage) {
   return message.channelLabel
     || channels.value.find((channel) => channel.channelKey === message.channelKey)?.label
     || message.channelKey
+}
+
+function messageStyle(message: ChatMessage) {
+  const token = message.presentation?.accentToken?.replace(/^channel\./, '')
+  const accent = token && state.themeDocument?.channelTokens[token]
+  return accent ? { '--message-accent': accent } : undefined
+}
+
+function applyPresentation(presentation: unknown) {
+  if (!presentation || typeof presentation !== 'object') return
+  const next = presentation as { layout?: Layout; theme?: string; themeDocument?: Theme }
+  if (next.layout) state.layout = next.layout
+  if (typeof next.theme === 'string') state.theme = next.theme
+  if (next.themeDocument) state.themeDocument = next.themeDocument
+}
+
+function messageTimestamp(message: ChatMessage) {
+  const createdAt = new Date(message.createdAt)
+  if (Number.isNaN(createdAt.getTime())) return ''
+  return createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function messageTimestampLabel(message: ChatMessage) {
+  const createdAt = new Date(message.createdAt)
+  if (Number.isNaN(createdAt.getTime())) return ''
+  return createdAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' })
+}
+
+function feedIsAtBottom() {
+  const feed = messageList.value
+  if (!feed) return true
+  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 8
+}
+
+async function scrollFeedToBottom() {
+  await nextTick()
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+  const feed = messageList.value
+  if (feed) feed.scrollTop = feed.scrollHeight
+  unreadMessages.value = 0
+}
+
+function handleFeedScroll() {
+  if (feedIsAtBottom()) unreadMessages.value = 0
+}
+
+function scheduleFeedFade() {
+  window.clearTimeout(feedTimer)
+  feedTimer = window.setTimeout(() => {
+    if (!open.value) feedVisible.value = false
+  }, state.layout.fadeDelayMs)
 }
 
 async function chooseSuggestion(suggestion: Suggestion) {
@@ -100,20 +186,27 @@ function receive(event: MessageEvent) {
   if (!message || typeof message.type !== 'string') return
   if (message.type === 'chat:open') {
     open.value = true
+    void scrollFeedToBottom()
     requestAnimationFrame(() => composer.value?.focus())
   } else if (message.type === 'chat:close') {
     open.value = false
     input.value = ''
     error.value = ''
+    void scrollFeedToBottom()
+    if (feedVisible.value) scheduleFeedFade()
     window.clearTimeout(errorTimer)
   } else if (message.type === 'chat:visibility') {
     visible.value = message.visible === true
   } else if (message.type === 'chat:bootstrap' && message.config) {
-    if (message.config.layout) state.layout = message.config.layout
-    if (typeof message.config.theme === 'string') state.theme = message.config.theme
-    if (Array.isArray(message.messages)) messages.value = message.messages
+    applyPresentation(message.config)
+    if (Array.isArray(message.messages)) {
+      messages.value = message.messages
+      void scrollFeedToBottom()
+    }
     if (Array.isArray(message.channels) && message.channels.length > 0) channels.value = message.channels
     if (Array.isArray(message.suggestions)) suggestions.value = message.suggestions
+  } else if (message.type === 'chat:presentation') {
+    applyPresentation(message.presentation)
   } else if (message.type === 'chat:directory' && Array.isArray(message.channels)) {
     channels.value = message.channels
     suggestions.value = Array.isArray(message.suggestions) ? message.suggestions : []
@@ -129,15 +222,19 @@ function receive(event: MessageEvent) {
   } else if (message.type === 'chat:message' && message.message) {
     error.value = ''
     window.clearTimeout(errorTimer)
+    const visibleInFilter = selectedFilter.value === 'all'
+      || selectedFilter.value === message.message.channelKey
+    const followNewMessage = !open.value || feedIsAtBottom()
+    feedVisible.value = true
     if (!messages.value.some((item) => item.messageId === message.message.messageId)) {
       messages.value.push(message.message)
       while (messages.value.length > 100) messages.value.shift()
+      if (visibleInFilter) {
+        if (followNewMessage) void scrollFeedToBottom()
+        else unreadMessages.value += 1
+      }
     }
-    feedVisible.value = true
-    window.clearTimeout(feedTimer)
-    feedTimer = window.setTimeout(() => {
-      if (!open.value) feedVisible.value = false
-    }, state.layout.fadeDelayMs)
+    scheduleFeedFade()
   } else if (message.type === 'chat:error') {
     error.value = typeof message.message === 'string' ? message.message : 'Message was not accepted.'
     window.clearTimeout(errorTimer)
@@ -145,16 +242,15 @@ function receive(event: MessageEvent) {
       error.value = ''
     }, Math.min(state.layout.fadeDelayMs, 5000))
     feedVisible.value = true
-    window.clearTimeout(feedTimer)
-    feedTimer = window.setTimeout(() => {
-      if (!open.value) feedVisible.value = false
-    }, state.layout.fadeDelayMs)
+    scheduleFeedFade()
   }
 }
 
 async function close() {
   open.value = false
   input.value = ''
+  void scrollFeedToBottom()
+  if (feedVisible.value) scheduleFeedFade()
   await nui('chat:close')
 }
 
@@ -207,7 +303,7 @@ onBeforeUnmount(() => {
   <main
     v-if="visible && (open || feedVisible)"
     class="chat-root"
-    :class="[state.layout.anchor, state.layout.density, { open, 'reduced-motion': state.layout.reducedMotion }]"
+    :class="[state.layout.anchor, state.layout.density, { open, 'reduced-motion': motionReduced }]"
     :data-theme="state.theme"
     :style="shellStyle"
   >
@@ -236,20 +332,44 @@ onBeforeUnmount(() => {
         <strong>Feather Chat</strong>
         <span>{{ selectedFilter === 'all' ? 'No messages yet.' : `No ${selectedFilterLabel || 'channel'} messages yet.` }}</span>
       </div>
-      <ol v-else class="message-list" aria-label="Recent messages">
+      <ol
+        v-else
+        ref="messageList"
+        class="message-list"
+        aria-label="Recent messages"
+        @scroll.passive="handleFeedScroll"
+      >
         <li
           v-for="message in filteredMessages"
           :key="message.messageId"
           class="message"
           :data-variant="message.presentation.variant"
+          :style="messageStyle(message)"
         >
           <span class="author">{{ message.author.displayName }}</span>
           <span v-if="selectedFilter === 'all'" class="message-channel">
             {{ messageChannelLabel(message) }}
           </span>
           <span class="body">{{ message.body.text }}</span>
+          <time
+            v-if="state.layout.timestamps && messageTimestamp(message)"
+            class="timestamp"
+            :datetime="message.createdAt"
+            :title="messageTimestampLabel(message)"
+          >
+            {{ messageTimestamp(message) }}
+          </time>
         </li>
       </ol>
+      <button
+        v-if="unreadMessages > 0"
+        type="button"
+        class="new-message-indicator"
+        :aria-label="`${unreadMessages} new ${unreadMessages === 1 ? 'message' : 'messages'}. Scroll to latest.`"
+        @click="scrollFeedToBottom"
+      >
+        {{ unreadMessages === 1 ? 'New message' : `${unreadMessages} new messages` }} ↓
+      </button>
       <div v-if="error" class="error" role="alert">
         {{ error }}
       </div>

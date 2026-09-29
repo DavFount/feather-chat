@@ -22,11 +22,13 @@ shared_scripts {
 }
 
 client_scripts {
+    'client/presentation.lua',
     'client/main.lua'
 }
 
 server_scripts {
     'server/channels.lua',
+    'server/themes.lua',
     'server/messaging.lua',
     'server/main.lua'
 }

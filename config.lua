@@ -35,5 +35,13 @@ Config = {
         default = 'feather.default',
         approved = { 'feather.default', 'feather.high_contrast' }
     },
+    Preferences = {
+        theme = true,
+        density = true,
+        timestamps = true,
+        reducedMotion = true,
+        fontScale = { enabled=true, minimum=0.75, maximum=1.5, step=0.05 },
+        idleOpacity = { enabled=true, minimum=0.2, maximum=1.0, step=0.05 }
+    },
     Features = { history=false, privateMessages=false, emojiPicker=false }
 }

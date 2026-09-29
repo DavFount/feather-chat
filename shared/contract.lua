@@ -4,6 +4,9 @@ ChatContract = {
     Anchors = { ['top-left']=true, ['top-right']=true, ['bottom-left']=true, ['bottom-right']=true },
     Densities = { compact=true, comfortable=true },
     Themes = { ['feather.default']=true, ['feather.high_contrast']=true },
+    ThemeFamilies = { default=true, system=true },
+    ThemeTokenKeys = { 'speech', 'whisper', 'shout', 'action', 'scene',
+        'organization', 'job', 'ooc', 'staff', 'system' },
     Channels = {
         ['local.say'] = { kind='player', radius='say', variant='speech' },
         ['local.whisper'] = { kind='player', radius='whisper', variant='whisper' },
@@ -19,6 +22,56 @@ end
 
 local function PositiveInteger(value, maximum)
     return type(value) == 'number' and value % 1 == 0 and value >= 1 and value <= maximum
+end
+
+local function ThemeKey(value)
+    return type(value) == 'string' and #value >= 3 and #value <= 96
+        and value:match('^[a-z][a-z0-9_.%-]+$') ~= nil
+        and value:find('.', 1, true) ~= nil
+end
+
+local function Color(value)
+    return type(value) == 'string'
+        and (value:match('^#%x%x%x%x%x%x$') ~= nil or value:match('^#%x%x%x%x%x%x%x%x$') ~= nil)
+end
+
+local function ExactKeys(value, keys)
+    if type(value) ~= 'table' then return false end
+    local allowed = {}
+    for _, key in ipairs(keys) do allowed[key] = true end
+    for key in pairs(value) do if not allowed[key] then return false end end
+    for _, key in ipairs(keys) do if value[key] == nil then return false end end
+    return true
+end
+
+function ChatContract.ValidateTheme(theme)
+    if type(theme) ~= 'table' or not ThemeKey(theme.themeKey) or theme.schemaVersion ~= 1
+        or not ExactKeys(theme, { 'themeKey', 'schemaVersion', 'typography', 'surface',
+            'text', 'channelTokens', 'shape', 'motion' })
+        or not ExactKeys(theme.typography, { 'family', 'lineHeight' })
+        or not ChatContract.ThemeFamilies[theme.typography.family]
+        or not NumberInRange(theme.typography.lineHeight, 1.1, 2.0)
+        or not ExactKeys(theme.surface, { 'background', 'panel', 'border' })
+        or not Color(theme.surface.background) or not Color(theme.surface.panel)
+        or not Color(theme.surface.border)
+        or not ExactKeys(theme.text, { 'primary', 'muted', 'danger' })
+        or not Color(theme.text.primary) or not Color(theme.text.muted)
+        or not Color(theme.text.danger)
+        or not ExactKeys(theme.channelTokens, ChatContract.ThemeTokenKeys)
+        or not ExactKeys(theme.shape, { 'radius', 'borderWidth' })
+        or not NumberInRange(theme.shape.radius, 0, 16)
+        or not NumberInRange(theme.shape.borderWidth, 1, 3)
+        or not ExactKeys(theme.motion, { 'enabled', 'durationMs' })
+        or type(theme.motion.enabled) ~= 'boolean'
+        or not NumberInRange(theme.motion.durationMs, 0, 500) then
+        return false, ChatResults.Err('invalid_theme', 'Theme document is invalid.')
+    end
+    for _, key in ipairs(ChatContract.ThemeTokenKeys) do
+        if not Color(theme.channelTokens[key]) then
+            return false, ChatResults.Err('invalid_theme', 'Theme channel token is invalid.', { token=key })
+        end
+    end
+    return true
 end
 
 function ChatContract.ValidateConfig(config)
@@ -66,15 +119,38 @@ function ChatContract.ValidateConfig(config)
         or type(config.Layout.reducedMotion) ~= 'boolean' then
         return ChatResults.Err('invalid_configuration', 'Chat layout configuration is invalid.')
     end
-    if type(config.Theme) ~= 'table' or not ChatContract.Themes[config.Theme.default]
+    if type(config.Theme) ~= 'table' or not ThemeKey(config.Theme.default)
         or type(config.Theme.approved) ~= 'table' or #config.Theme.approved < 1
         or #config.Theme.approved > 16 then
         return ChatResults.Err('invalid_configuration', 'Chat theme configuration is invalid.')
     end
+    local approvedThemes = {}
     for _, theme in ipairs(config.Theme.approved) do
-        if not ChatContract.Themes[theme] then
+        if not ThemeKey(theme) or approvedThemes[theme] then
             return ChatResults.Err('invalid_configuration', 'Chat approved theme is invalid.', { theme=theme })
         end
+        approvedThemes[theme] = true
+    end
+    if not approvedThemes[config.Theme.default] then
+        return ChatResults.Err('invalid_configuration', 'Chat default theme must be approved.')
+    end
+    local preferences = config.Preferences
+    if type(preferences) ~= 'table' or type(preferences.theme) ~= 'boolean'
+        or type(preferences.density) ~= 'boolean' or type(preferences.timestamps) ~= 'boolean'
+        or type(preferences.reducedMotion) ~= 'boolean'
+        or type(preferences.fontScale) ~= 'table'
+        or type(preferences.fontScale.enabled) ~= 'boolean'
+        or not NumberInRange(preferences.fontScale.minimum, 0.75, 1.5)
+        or not NumberInRange(preferences.fontScale.maximum, 0.75, 1.5)
+        or preferences.fontScale.minimum > preferences.fontScale.maximum
+        or not NumberInRange(preferences.fontScale.step, 0.01, 0.25)
+        or type(preferences.idleOpacity) ~= 'table'
+        or type(preferences.idleOpacity.enabled) ~= 'boolean'
+        or not NumberInRange(preferences.idleOpacity.minimum, 0.1, 1.0)
+        or not NumberInRange(preferences.idleOpacity.maximum, 0.1, 1.0)
+        or preferences.idleOpacity.minimum > preferences.idleOpacity.maximum
+        or not NumberInRange(preferences.idleOpacity.step, 0.01, 0.25) then
+        return ChatResults.Err('invalid_configuration', 'Chat preference configuration is invalid.')
     end
     if type(config.Features) ~= 'table' or type(config.Features.history) ~= 'boolean'
         or type(config.Features.privateMessages) ~= 'boolean'

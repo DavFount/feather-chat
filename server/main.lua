@@ -5,7 +5,8 @@ local function Features()
     local messaging = ChatMessaging and ChatMessaging.IsReady() and 1 or 0
     return {
         messaging=messaging, channels=messaging, channelProviders=messaging, proximity=messaging,
-        suggestions=messaging, theming=1, moderation=0, persistence=0, privateMessages=0
+        suggestions=messaging, theming=1, themeRegistration=1, preferences=1,
+        moderation=0, persistence=0, staffCases=0, privateMessages=0
     }
 end
 
@@ -70,6 +71,16 @@ local function Boot()
             end)
             if called and type(result) == 'table' and result.ok == true then break end
             Wait(250)
+        end
+
+        local themeStart = ChatThemes.Start()
+        local themeRoutes = themeStart.ok and ChatThemes.RegisterRoutes() or themeStart
+        if type(themeRoutes) ~= 'table' or themeRoutes.ok ~= true then
+            lifecycle = { state='unavailable', reason='theme_registration_failed', readyAt=nil }
+            print(('[feather-chat] theme registration failed code=%s'):format(
+                tostring(type(themeRoutes) == 'table' and themeRoutes.code or 'invalid_result')))
+            booting = false
+            return
         end
 
         local channelStart = ChatChannels.Start()
@@ -179,4 +190,28 @@ RegisterCommand('ChatMessageContractSmokeTest', function(source)
             test[1], test[2] and 'PASS' or 'FAIL'))
     end
     print(('[ChatMessageContractSmokeTest] done %d/%d passed'):format(passed, #tests))
+end, true)
+
+RegisterCommand('ChatMessageConcurrencySmokeTest', function(source)
+    if source ~= 0 then return end
+    local tests = ChatMessaging.ConcurrencySmoke()
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatMessageConcurrencySmokeTest] %-34s %s'):format(
+            test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatMessageConcurrencySmokeTest] done %d/%d passed'):format(passed, #tests))
+end, true)
+
+RegisterCommand('ChatThemeContractSmokeTest', function(source)
+    if source ~= 0 then return end
+    local tests = ChatThemes.Smoke()
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatThemeContractSmokeTest] %-30s %s'):format(
+            test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatThemeContractSmokeTest] done %d/%d passed'):format(passed, #tests))
 end, true)

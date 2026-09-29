@@ -4,6 +4,7 @@ local sequence = 0
 local rates = {}
 local submissions = {}
 local ready = false
+local maximumRememberedSubmissions = 32
 
 local function Callable(value)
     return type(value) == 'function' or (type(value) == 'table'
@@ -123,28 +124,94 @@ local function ConnectedSessions()
     return connected
 end
 
-local function Remember(source, submissionId, result)
-    submissions[source] = submissions[source] or { order={}, values={} }
+local function PruneSubmissions(source)
     local cache = submissions[source]
-    cache.values[submissionId] = result
-    cache.order[#cache.order + 1] = submissionId
-    while #cache.order > 32 do cache.values[table.remove(cache.order, 1)] = nil end
+    if not cache then return end
+    local index = 1
+    while #cache.order > maximumRememberedSubmissions and index <= #cache.order do
+        local cacheKey = cache.order[index]
+        local entry = cache.values[cacheKey]
+        if entry and entry.state == 'complete' then
+            cache.values[cacheKey] = nil
+            table.remove(cache.order, index)
+        else
+            index = index + 1
+        end
+    end
 end
 
-local function Submit(payload, source, context)
-    local cached = submissions[source] and submissions[source].values[payload.submissionId]
-    if cached then return cached end
-    if not exports['feather-core']:IsSessionCurrent(source, context.sessionId, context.characterId) then
+local function Reserve(source, sessionId, submissionId)
+    submissions[source] = submissions[source] or { order={}, values={} }
+    local cache = submissions[source]
+    local cacheKey = tostring(sessionId) .. '\0' .. submissionId
+    local existing = cache.values[cacheKey]
+    if existing then return existing, false end
+    local entry = { state='pending' }
+    cache.values[cacheKey] = entry
+    cache.order[#cache.order + 1] = cacheKey
+    PruneSubmissions(source)
+    return entry, true
+end
+
+local function Complete(source, entry, result)
+    entry.result = result
+    entry.state = 'complete'
+    PruneSubmissions(source)
+    return result
+end
+
+local function DefaultDependencies()
+    return {
+        wait=function() Wait(0) end,
+        isSessionCurrent=function(source, sessionId, characterId)
+            return exports['feather-core']:IsSessionCurrent(source, sessionId, characterId)
+        end,
+        normalizeText=NormalizeText,
+        rateAllowed=RateAllowed,
+        profile=Profile,
+        getChannel=ChatChannels.Get,
+        canSend=ChatChannels.CanSend,
+        recipients=function(channel, actor, source)
+            if channel.routing == 'proximity' then
+                return Recipients(source, Config.Channels.proximity[channel.radius])
+            end
+            local connected = ConnectedSessions()
+            local audience = ChatChannels.ResolveAudience(channel, actor, connected)
+            if not audience.ok or type(audience.value) ~= 'table'
+                or type(audience.value.sources) ~= 'table' then
+                return nil, ChatResults.Err(audience.code or 'provider_unavailable',
+                    audience.message or 'Channel audience is unavailable.')
+            end
+            local recipients, allowed = {}, {}
+            for _, session in ipairs(connected) do allowed[session.source] = true end
+            for _, target in ipairs(audience.value.sources) do
+                target = tonumber(target)
+                if target and allowed[target] and #recipients < 256 then
+                    recipients[#recipients + 1] = target
+                end
+            end
+            return recipients
+        end,
+        newUuid=NewUuid,
+        createdAt=function() return os.date('!%Y-%m-%dT%H:%M:%SZ') end,
+        deliver=function(target, message)
+            TriggerClientEvent('feather-chat:message:v1', target, message)
+        end
+    }
+end
+
+local function ProcessSubmission(payload, source, context, dependencies)
+    if not dependencies.isSessionCurrent(source, context.sessionId, context.characterId) then
         return ChatResults.Err('session_stale', 'Character session changed.')
     end
-    local text, textError = NormalizeText(payload.text)
+    local text, textError = dependencies.normalizeText(payload.text)
     if not text then return ChatResults.Err('invalid_message', textError) end
-    if not RateAllowed(source) then
+    if not dependencies.rateAllowed(source) then
         return ChatResults.Err('rate_limited', 'You are sending messages too quickly.')
     end
-    local identity = Profile(context.characterId)
+    local identity = dependencies.profile(context.characterId)
     if not identity.ok then return identity end
-    local channel = ChatChannels.Get(payload.channelKey)
+    local channel = dependencies.getChannel(payload.channelKey)
     if not channel or channel.visibility == 'system' then
         return ChatResults.Err('channel_unavailable', 'That channel is unavailable.')
     end
@@ -153,47 +220,46 @@ local function Submit(payload, source, context)
     end
     local actor = { source=source, accountId=context.accountId,
         characterId=context.characterId, sessionId=context.sessionId }
-    local access = ChatChannels.CanSend(channel, actor)
+    local access = dependencies.canSend(channel, actor)
     if not access.ok or type(access.value) ~= 'table'
         or (access.value.allowed ~= true and access.value.canSend ~= true) then
         return ChatResults.Err(access.code or 'forbidden', access.message or 'You cannot send to that channel.')
     end
-    local recipients, routingError
-    if channel.routing == 'proximity' then
-        recipients, routingError = Recipients(source, Config.Channels.proximity[channel.radius])
-    else
-        local audience = ChatChannels.ResolveAudience(channel, actor, ConnectedSessions())
-        if audience.ok and type(audience.value) == 'table' and type(audience.value.sources) == 'table' then
-            recipients = {}
-            local allowed = {}
-            for _, session in ipairs(ConnectedSessions()) do allowed[session.source] = true end
-            for _, target in ipairs(audience.value.sources) do
-                target = tonumber(target)
-                if target and allowed[target] and #recipients < 256 then recipients[#recipients + 1] = target end
-            end
-        else
-            routingError = ChatResults.Err(audience.code or 'provider_unavailable',
-                audience.message or 'Channel audience is unavailable.')
-        end
-    end
+    local recipients, routingError = dependencies.recipients(channel, actor, source)
     if not recipients then return routingError end
+    if not dependencies.isSessionCurrent(source, context.sessionId, context.characterId) then
+        return ChatResults.Err('session_stale', 'Character session changed.')
+    end
 
     sequence = sequence + 1
     local message = {
-        messageId=NewUuid(), channelKey=payload.channelKey,
+        messageId=dependencies.newUuid(), channelKey=payload.channelKey,
         channelLabel=channel.shortLabel or channel.label, kind=channel.kind or 'player',
         author=identity.value, body={ text=text, format='plain' },
         presentation=channel.presentation,
-        createdAt=os.date('!%Y-%m-%dT%H:%M:%SZ'), sequence=sequence
+        createdAt=dependencies.createdAt(), sequence=sequence
     }
     for _, target in ipairs(recipients) do
-        TriggerClientEvent('feather-chat:message:v1', target, message)
+        dependencies.deliver(target, message)
     end
-    local result = ChatResults.Ok({
+    return ChatResults.Ok({
         messageId=message.messageId, submissionId=payload.submissionId, recipientCount=#recipients
     })
-    Remember(source, payload.submissionId, result)
-    return result
+end
+
+local function Submit(payload, source, context, testDependencies)
+    local dependencies = testDependencies or DefaultDependencies()
+    local entry, claimed = Reserve(source, context.sessionId, payload.submissionId)
+    if not claimed then
+        while entry.state == 'pending' do dependencies.wait() end
+        return entry.result
+    end
+    local called, result = pcall(ProcessSubmission, payload, source, context, dependencies)
+    if not called then
+        print(('[feather-chat] submission failed unexpectedly: %s'):format(tostring(result)))
+        result = ChatResults.Err('internal_error', 'Chat submission failed.')
+    end
+    return Complete(source, entry, result)
 end
 
 function ChatMessaging.Start()
@@ -213,6 +279,67 @@ end
 
 function ChatMessaging.IsReady() return ready end
 function ChatMessaging.NormalizeText(text) return NormalizeText(text) end
+
+function ChatMessaging.ConcurrencySmoke()
+    local source = -2147483000
+    submissions[source], rates[source] = nil, nil
+    local deliveries, sessionChecks = 0, 0
+    local dependencies = {
+        wait=function() coroutine.yield('waiting') end,
+        isSessionCurrent=function()
+            sessionChecks = sessionChecks + 1
+            return true
+        end,
+        normalizeText=NormalizeText,
+        rateAllowed=function() return true end,
+        profile=function(characterId)
+            coroutine.yield('profile')
+            return ChatResults.Ok({ characterId=characterId, displayName='Test Character' })
+        end,
+        getChannel=function()
+            return { channelKey='local.say', label='Say', visibility='public', routing='proximity',
+                input={ maximumLength=Config.Limits.maxMessageBytes }, presentation={ variant='speech' } }
+        end,
+        canSend=function() return ChatResults.Ok({ allowed=true }) end,
+        recipients=function() return { source } end,
+        newUuid=function() return '00000000-0000-4000-8000-000000000001' end,
+        createdAt=function() return '2000-01-01T00:00:00Z' end,
+        deliver=function() deliveries = deliveries + 1 end
+    }
+    local payload = { channelKey='local.say', text='Concurrent', submissionId='smoke:concurrent' }
+    local context = { accountId='account', characterId='character', sessionId='session' }
+    local firstResult, secondResult
+    local first = coroutine.create(function() firstResult = Submit(payload, source, context, dependencies) end)
+    local second = coroutine.create(function() secondResult = Submit(payload, source, context, dependencies) end)
+    local firstStarted, firstYield = coroutine.resume(first)
+    local secondStarted, secondYield = coroutine.resume(second)
+    local firstFinished = coroutine.resume(first)
+    local secondFinished = coroutine.resume(second)
+    local replay = Submit(payload, source, context, dependencies)
+    local concurrentPassed = firstStarted and firstYield == 'profile'
+        and secondStarted and secondYield == 'waiting' and firstFinished and secondFinished
+        and firstResult == secondResult and replay == firstResult and deliveries == 1
+
+    submissions[source], rates[source] = nil, nil
+    deliveries, sessionChecks = 0, 0
+    dependencies.profile=function(characterId)
+        return ChatResults.Ok({ characterId=characterId, displayName='Test Character' })
+    end
+    dependencies.isSessionCurrent=function()
+        sessionChecks = sessionChecks + 1
+        return sessionChecks == 1
+    end
+    local stale = Submit({ channelKey='local.say', text='Stale', submissionId='smoke:stale' },
+        source, context, dependencies)
+    local stalePassed = stale.ok == false and stale.code == 'session_stale'
+        and sessionChecks == 2 and deliveries == 0
+    submissions[source], rates[source] = nil, nil
+    return {
+        { 'concurrent duplicate coalesced', concurrentPassed },
+        { 'completed duplicate replayed', replay == firstResult },
+        { 'in-flight stale session rejected', stalePassed }
+    }
+end
 
 AddEventHandler('playerDropped', function()
     rates[source], submissions[source] = nil, nil

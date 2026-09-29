@@ -46,9 +46,12 @@ RegisterKeyMapping(Config.Input.command, 'Open Feather Chat', 'keyboard', Config
 
 RegisterNUICallback('chat:ready', function(_, callback)
     state.uiReady = true
+    local presentation = ChatPresentation.GetState()
     Ui({
         type='chat:bootstrap',
-        config={ layout=Config.Layout, theme=Config.Theme.default, limits=Config.Limits },
+        config={ layout=presentation.layout, theme=presentation.theme,
+            themeDocument=presentation.themeDocument, themeRevision=presentation.themeRevision,
+            limits=Config.Limits },
         messages=state.messages, channels=state.channels, suggestions=state.suggestions
     })
     callback({ ok=true })
