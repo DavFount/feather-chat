@@ -3,11 +3,6 @@ name: release
 on:
   push:
     branches: [main]
-    tags: ['v*']
-  workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   package:
@@ -51,7 +46,6 @@ jobs:
           path: feather-chat.zip
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -63,16 +57,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: feather-chat-install
-      - name: Publish tested tag artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+      - name: Read package version
+        id: package-version
+        uses: martinbeentjes/npm-get-version-action@main
+        with:
+          path: web
+      - name: Verify release version
         shell: bash
         run: |
           set -euo pipefail
           version=$(node -p "require('./web/package.json').version")
-          test "$TAG" = "v$version"
           grep -Fqx "version '$version'" fxmanifest.lua
-          flags=()
-          if [[ "$version" == *-* ]]; then flags+=(--prerelease --latest=false); fi
-          gh release create "$TAG" feather-chat.zip --verify-tag --title "Feather Chat $version" --generate-notes "${flags[@]}"
+      - name: Publish automatic release
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: v${{ steps.package-version.outputs.current-version }}
+          prerelease: ${{ contains(steps.package-version.outputs.current-version, '-') }}
+          title: Feather Chat ${{ steps.package-version.outputs.current-version }}
+          files: feather-chat.zip

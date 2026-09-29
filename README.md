@@ -241,11 +241,11 @@ HTML. Commit or package the built `ui/` output with releases.
 
 ## Releases
 
-Pushes to `main` validate and package the resource without publishing a GitHub
-release. To publish, keep the versions in `fxmanifest.lua` and
-`web/package.json` identical, then push a matching `v<version>` tag. For
-example, version `0.1.0-alpha.1` requires tag `v0.1.0-alpha.1`.
+Pushes to `main` validate and package the resource, then create or update the
+GitHub release for the version shared by `fxmanifest.lua` and
+`web/package.json`. The workflow manages the matching `v<version>` release tag;
+contributors do not create or push tags manually.
 
 Versions with a SemVer suffix such as `-alpha.1`, `-beta.1`, or `-rc.1` are
-published as GitHub prereleases and are not marked as the latest stable
-release. Unsuffixed versions are published as stable releases.
+published as GitHub prereleases. Unsuffixed versions are published as stable
+releases.
