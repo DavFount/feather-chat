@@ -18,7 +18,40 @@ Config = {
     },
     RateLimit = {
         windowMs = 10000,
-        maxMessages = 5
+        maxMessages = 5,
+        repeatedWindowMs = 15000,
+        maxRepeatedMessages = 2,
+        channelProfiles = {
+            ['local.whisper'] = { windowMs=10000, maxMessages=6 },
+            ['local.say'] = { windowMs=10000, maxMessages=5 },
+            ['local.shout'] = { windowMs=15000, maxMessages=3 },
+            ['roleplay.me'] = { windowMs=10000, maxMessages=5 },
+            ['roleplay.do'] = { windowMs=10000, maxMessages=5 }
+        }
+    },
+    Moderation = {
+        mutes = {
+            enabled = true,
+            allowedScopes = { 'all', 'channel', 'ooc' },
+            permanentAllowed = false,
+            maximumDurationMinutes = 10080,
+            persistenceRequired = true
+        },
+        playerControls = {
+            ignoreEnabled = true,
+            ignoreSubjectScope = 'account',
+            maximumIgnoredSubjects = 100
+        },
+        staffBypass = {
+            system = true,
+            moderation = true,
+            staffChannel = true,
+            staffCase = true,
+            ordinaryPlayerChat = false
+        },
+        providers = { enabled=false, required=false, maximumRegistered=8 },
+        trustedCallers = { ['feather-admin']=true },
+        audit = { enabled=true, includeMessageBody=false }
     },
     Layout = {
         anchor = 'top-left',

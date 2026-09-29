@@ -51,7 +51,7 @@ RegisterNUICallback('chat:ready', function(_, callback)
         type='chat:bootstrap',
         config={ layout=presentation.layout, theme=presentation.theme,
             themeDocument=presentation.themeDocument, themeRevision=presentation.themeRevision,
-            limits=Config.Limits },
+            limits=Config.Limits, ignoreEnabled=Config.Moderation.playerControls.ignoreEnabled },
         messages=state.messages, channels=state.channels, suggestions=state.suggestions
     })
     callback({ ok=true })
@@ -150,6 +150,43 @@ RegisterNUICallback('chat:submit', function(payload, callback)
     if Config.Input.closeOnSubmit then CloseChat() end
 end)
 
+RegisterNUICallback('chat:ignore-toggle', function(payload, callback)
+    if type(payload) ~= 'table' or type(payload.messageId) ~= 'string' then
+        callback(ChatResults.Err('invalid_input', 'Ignore request is invalid.'))
+        return
+    end
+    local result, transportError = exports['feather-core']:CallRPCAsync(
+        'chat.ignore.toggle.v1', { messageId=payload.messageId }, nil,
+        Config.Limits.callbackTimeoutMs)
+    if type(result) ~= 'table' then
+        result = ChatResults.Err(transportError and transportError.code or 'transport_failed',
+            transportError and transportError.message or 'Ignore preference could not be saved.')
+    end
+    callback(result)
+end)
+
+local function IgnoreRPC(route, payload, callback)
+    local result, transportError = exports['feather-core']:CallRPCAsync(
+        route, payload, nil, Config.Limits.callbackTimeoutMs)
+    if type(result) ~= 'table' then
+        result = ChatResults.Err(transportError and transportError.code or 'transport_failed',
+            transportError and transportError.message or 'Ignore preference request failed.')
+    end
+    callback(result)
+end
+
+RegisterNUICallback('chat:ignore-list', function(_, callback)
+    IgnoreRPC('chat.ignore.list.v1', {}, callback)
+end)
+
+RegisterNUICallback('chat:ignore-remove', function(payload, callback)
+    if type(payload) ~= 'table' or type(payload.ignoreId) ~= 'string' then
+        callback(ChatResults.Err('invalid_input', 'Ignore removal request is invalid.'))
+        return
+    end
+    IgnoreRPC('chat.ignore.remove.v1', { ignoreId=payload.ignoreId }, callback)
+end)
+
 RegisterNetEvent('feather-chat:message:v1', function(message)
     if type(message) ~= 'table' or type(message.messageId) ~= 'string'
         or state.seen[message.messageId] then return end
@@ -160,6 +197,12 @@ RegisterNetEvent('feather-chat:message:v1', function(message)
         if removed and removed.messageId then state.seen[removed.messageId] = nil end
     end
     Ui({ type='chat:message', message=message })
+end)
+
+RegisterNetEvent('feather-chat:notice:v1', function(message)
+    if type(message) == 'string' and message ~= '' then
+        Ui({ type='chat:error', message=message })
+    end
 end)
 
 for command, channelKey in pairs(inputAliases) do

@@ -62,8 +62,10 @@ button, textarea { font: inherit; }
 }
 
 .channel-tabs { display: flex; gap: 0.35rem; padding: 0.45rem; border-bottom: 1px solid var(--border); }
-.channel { border: 0; border-radius: 4px; padding: 0.3rem 0.65rem; background: transparent; color: var(--muted); }
+.channel { border: 0; border-radius: 4px; padding: 0.3rem 0.65rem; background: transparent; color: var(--muted); cursor: pointer; }
 .channel.active { background: rgba(217, 180, 111, 0.15); color: var(--accent); }
+.channel:hover { background: rgba(217, 180, 111, 0.08); color: var(--text); }
+.ignored-players-button { margin-left: auto; border: 1px solid var(--border); background: var(--surface); }
 .channel:focus-visible, .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .empty-state { display: flex; flex-direction: column; gap: 0.25rem; min-height: 7rem; padding: 1rem; }
 .empty-state span { color: var(--muted); font-family: system-ui, sans-serif; font-size: 0.82em; }
@@ -81,6 +83,15 @@ button, textarea { font: inherit; }
 .message[data-variant='scene'] .body { color: #c9d9b5; font-style: italic; }
 .message[data-variant='whisper'] { opacity: 0.78; }
 .message[data-variant='shout'] .body { font-weight: 700; }
+.message-context-menu { position: fixed; z-index: 20; min-width: 13rem; border: 1px solid var(--border); border-radius: var(--chat-radius); padding: 0.3rem; background: var(--panel); box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.38); }
+.message-context-menu button { width: 100%; border: 0; border-radius: 3px; padding: 0.42rem 0.6rem; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.message-context-menu button:hover, .message-context-menu button:focus-visible { background: rgba(217, 180, 111, 0.14); outline: 1px solid var(--accent); }
+.message-context-menu button:disabled { opacity: 0.55; cursor: wait; }
+.ignored-players { display: flex; flex-direction: column; gap: 0.4rem; max-height: 13rem; padding: 0.75rem 1rem; overflow-y: auto; font-family: system-ui, sans-serif; }
+.ignored-empty { color: var(--muted); font-size: 0.82em; }
+.ignored-entry { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.ignored-entry button { border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.5rem; background: transparent; color: var(--accent); cursor: pointer; }
+.ignored-entry button:hover, .ignored-entry button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .error { border-top: 1px solid var(--border); padding: 0.45rem 1rem; color: var(--danger); font-family: system-ui, sans-serif; font-size: 0.82em; }
 .chat-panel { position: relative; }
 .new-message-indicator { position: absolute; right: 0.75rem; bottom: 0.5rem; border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.55rem; background: var(--panel); box-shadow: 0 0.2rem 0.65rem rgba(0, 0, 0, 0.3); color: var(--accent); font-family: system-ui, sans-serif; font-size: 0.72em; opacity: 0.9; cursor: pointer; }

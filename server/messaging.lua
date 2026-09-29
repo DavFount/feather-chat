@@ -2,6 +2,8 @@ ChatMessaging = {}
 
 local sequence = 0
 local rates = {}
+local channelRates = {}
+local repeats = {}
 local submissions = {}
 local ready = false
 local maximumRememberedSubmissions = 32
@@ -47,16 +49,30 @@ local function NormalizeText(text)
     return text
 end
 
-local function RateAllowed(source)
+local function WindowAllowed(store, key, windowMs, maximum)
     local now = GetGameTimer()
-    local window = rates[source]
-    if not window or now - window.startedAt >= Config.RateLimit.windowMs then
-        rates[source] = { startedAt=now, count=1 }
+    local window = store[key]
+    if not window or (now - window.startedAt) % 4294967296 >= windowMs then
+        store[key] = { startedAt=now, count=1 }
         return true
     end
-    if window.count >= Config.RateLimit.maxMessages then return false end
+    if window.count >= maximum then return false end
     window.count = window.count + 1
     return true
+end
+
+local function RateAllowed(source, channelKey, text)
+    if not WindowAllowed(rates, source, Config.RateLimit.windowMs, Config.RateLimit.maxMessages) then
+        return false
+    end
+    local profile = Config.RateLimit.channelProfiles[channelKey]
+    channelRates[source] = channelRates[source] or {}
+    if profile and not WindowAllowed(channelRates[source], channelKey,
+        profile.windowMs, profile.maxMessages) then return false end
+    local fingerprint = channelKey .. '\0' .. text:lower()
+    repeats[source] = repeats[source] or {}
+    return WindowAllowed(repeats[source], fingerprint, Config.RateLimit.repeatedWindowMs,
+        Config.RateLimit.maxRepeatedMessages)
 end
 
 local function Profile(characterId)
@@ -171,6 +187,10 @@ local function DefaultDependencies()
         profile=Profile,
         getChannel=ChatChannels.Get,
         canSend=ChatChannels.CanSend,
+        moderationCanSend=ChatModeration.CanSend,
+        moderateMessage=ChatModeration.EvaluateMessage,
+        filterRecipients=ChatModeration.FilterRecipients,
+        recordDelivery=ChatModeration.RecordDelivery,
         recipients=function(channel, actor, source)
             if channel.routing == 'proximity' then
                 return Recipients(source, Config.Channels.proximity[channel.radius])
@@ -206,9 +226,6 @@ local function ProcessSubmission(payload, source, context, dependencies)
     end
     local text, textError = dependencies.normalizeText(payload.text)
     if not text then return ChatResults.Err('invalid_message', textError) end
-    if not dependencies.rateAllowed(source) then
-        return ChatResults.Err('rate_limited', 'You are sending messages too quickly.')
-    end
     local identity = dependencies.profile(context.characterId)
     if not identity.ok then return identity end
     local channel = dependencies.getChannel(payload.channelKey)
@@ -225,8 +242,21 @@ local function ProcessSubmission(payload, source, context, dependencies)
         or (access.value.allowed ~= true and access.value.canSend ~= true) then
         return ChatResults.Err(access.code or 'forbidden', access.message or 'You cannot send to that channel.')
     end
+    local moderation = dependencies.moderationCanSend(actor, channel)
+    if not moderation.ok then return moderation end
+    if not dependencies.rateAllowed(source, channel.channelKey, text) then
+        return ChatResults.Err('rate_limited', 'You are sending messages too quickly.')
+    end
+    local moderated = dependencies.moderateMessage(actor, channel, text)
+    if not moderated.ok then return moderated end
+    text, textError = dependencies.normalizeText(moderated.value.text)
+    if not text then return ChatResults.Err('invalid_content', textError) end
+    if #text > channel.input.maximumLength then
+        return ChatResults.Err('invalid_content', 'Moderated message is too long.')
+    end
     local recipients, routingError = dependencies.recipients(channel, actor, source)
     if not recipients then return routingError end
+    recipients = dependencies.filterRecipients(actor, recipients, channel)
     if not dependencies.isSessionCurrent(source, context.sessionId, context.characterId) then
         return ChatResults.Err('session_stale', 'Character session changed.')
     end
@@ -240,6 +270,7 @@ local function ProcessSubmission(payload, source, context, dependencies)
         createdAt=dependencies.createdAt(), sequence=sequence
     }
     for _, target in ipairs(recipients) do
+        dependencies.recordDelivery(target, message, actor)
         dependencies.deliver(target, message)
     end
     return ChatResults.Ok({
@@ -301,6 +332,10 @@ function ChatMessaging.ConcurrencySmoke()
                 input={ maximumLength=Config.Limits.maxMessageBytes }, presentation={ variant='speech' } }
         end,
         canSend=function() return ChatResults.Ok({ allowed=true }) end,
+        moderationCanSend=function() return ChatResults.Ok({ allowed=true }) end,
+        moderateMessage=function(_, _, text) return ChatResults.Ok({ text=text }) end,
+        filterRecipients=function(_, recipients) return recipients end,
+        recordDelivery=function() end,
         recipients=function() return { source } end,
         newUuid=function() return '00000000-0000-4000-8000-000000000001' end,
         createdAt=function() return '2000-01-01T00:00:00Z' end,
@@ -341,7 +376,37 @@ function ChatMessaging.ConcurrencySmoke()
     }
 end
 
+function ChatMessaging.RateLimitSmoke()
+    local source = -2147482999
+    local function Reset()
+        rates[source], channelRates[source], repeats[source] = nil, nil, nil
+    end
+    Reset()
+    local repeatFirst = RateAllowed(source, 'local.whisper', 'same')
+    local repeatSecond = RateAllowed(source, 'local.whisper', 'same')
+    local repeatThird = RateAllowed(source, 'local.whisper', 'same')
+    Reset()
+    local shout = {}
+    for index = 1, 4 do shout[index] = RateAllowed(source, 'local.shout', 'shout-' .. index) end
+    Reset()
+    local global = {}
+    for index = 1, Config.RateLimit.maxMessages + 1 do
+        global[index] = RateAllowed(source, 'unprofiled.channel', 'global-' .. index)
+    end
+    Reset()
+    return {
+        { 'repeat flood bounded', repeatFirst and repeatSecond and not repeatThird },
+        { 'channel profile bounded', shout[1] and shout[2] and shout[3] and not shout[4] },
+        { 'global profile bounded', global[Config.RateLimit.maxMessages]
+            and not global[Config.RateLimit.maxMessages + 1] }
+    }
+end
+
 AddEventHandler('playerDropped', function()
-    rates[source], submissions[source] = nil, nil
+    rates[source], channelRates[source], repeats[source], submissions[source] = nil, nil, nil, nil
+end)
+
+AddEventHandler('onResourceStop', function(resource)
+    if resource == 'feather-core' then ready = false end
 end)
 

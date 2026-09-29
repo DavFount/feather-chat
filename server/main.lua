@@ -6,7 +6,9 @@ local function Features()
     return {
         messaging=messaging, channels=messaging, channelProviders=messaging, proximity=messaging,
         suggestions=messaging, theming=1, themeRegistration=1, preferences=1,
-        moderation=0, persistence=0, staffCases=0, privateMessages=0
+        moderation=ChatModeration and 1 or 0, persistence=ChatModeration and 1 or 0,
+        moderationProviders=ChatModeration and 1 or 0, playerIgnore=ChatModeration and 1 or 0,
+        staffCases=0, privateMessages=0
     }
 end
 
@@ -27,6 +29,7 @@ local function Health()
         ready=lifecycle.state == 'ready',
         reason=lifecycle.reason,
         core=GetResourceState('feather-core'),
+        mysql=GetResourceState('feather-mysql'),
         readyAt=lifecycle.readyAt
     })
 end
@@ -92,6 +95,22 @@ local function Boot()
             booting = false
             return
         end
+        local moderationStart = ChatModeration.Start()
+        if type(moderationStart) ~= 'table' or moderationStart.ok ~= true then
+            lifecycle = { state='unavailable', reason='moderation_persistence_failed', readyAt=nil }
+            print(('[feather-chat] moderation startup failed code=%s'):format(
+                tostring(type(moderationStart) == 'table' and moderationStart.code or 'invalid_result')))
+            booting = false
+            return
+        end
+        local moderationRoutes = ChatModeration.RegisterRoutes()
+        if type(moderationRoutes) ~= 'table' or moderationRoutes.ok ~= true then
+            lifecycle = { state='unavailable', reason='moderation_registration_failed', readyAt=nil }
+            print(('[feather-chat] moderation route registration failed code=%s'):format(
+                tostring(type(moderationRoutes) == 'table' and moderationRoutes.code or 'invalid_result')))
+            booting = false
+            return
+        end
         local messaging = ChatMessaging.Start()
         if type(messaging) ~= 'table' or messaging.ok ~= true then
             lifecycle = { state='unavailable', reason='messaging_registration_failed', readyAt=nil }
@@ -110,15 +129,15 @@ end
 Boot()
 
 AddEventHandler('onResourceStart', function(startedResource)
-    if startedResource == 'feather-core' then
-        lifecycle = { state='starting', reason='waiting_for_core', readyAt=nil }
+    if startedResource == 'feather-core' or startedResource == 'feather-mysql' then
+        lifecycle = { state='starting', reason='waiting_for_dependencies', readyAt=nil }
         Boot()
     end
 end)
 
 AddEventHandler('onResourceStop', function(stoppedResource)
-    if stoppedResource == 'feather-core' then
-        lifecycle = { state='degraded', reason='core_unavailable', readyAt=nil }
+    if stoppedResource == 'feather-core' or stoppedResource == 'feather-mysql' then
+        lifecycle = { state='degraded', reason=stoppedResource .. '_unavailable', readyAt=nil }
     elseif stoppedResource == resourceName then
         lifecycle = { state='stopping', reason='resource_stop', readyAt=nil }
     end
@@ -148,6 +167,32 @@ RegisterCommand('ChatFoundationSmokeTest', function(source)
         print(('[ChatFoundationSmokeTest] %-24s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
     end
     print(('[ChatFoundationSmokeTest] done %d/%d passed'):format(passed, #tests))
+end, true)
+
+RegisterCommand('ChatModerationSmokeTest', function(source)
+    if source ~= 0 then return end
+    local called, tests = pcall(ChatModeration.Smoke)
+    if not called then
+        print(('[ChatModerationSmokeTest] persistence check failed: %s'):format(tostring(tests)))
+        return
+    end
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatModerationSmokeTest] %-28s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatModerationSmokeTest] done %d/%d passed'):format(passed, #tests))
+end, true)
+
+RegisterCommand('ChatModerationProviderSmokeTest', function(source)
+    if source ~= 0 then return end
+    local tests = ChatModeration.ProviderSmoke()
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatModerationProviderSmokeTest] %-34s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatModerationProviderSmokeTest] done %d/%d passed'):format(passed, #tests))
 end, true)
 
 RegisterCommand('ChatChannelRegistrySmokeTest', function(source)
@@ -202,6 +247,17 @@ RegisterCommand('ChatMessageConcurrencySmokeTest', function(source)
             test[1], test[2] and 'PASS' or 'FAIL'))
     end
     print(('[ChatMessageConcurrencySmokeTest] done %d/%d passed'):format(passed, #tests))
+end, true)
+
+RegisterCommand('ChatRateLimitSmokeTest', function(source)
+    if source ~= 0 then return end
+    local tests = ChatMessaging.RateLimitSmoke()
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatRateLimitSmokeTest] %-28s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatRateLimitSmokeTest] done %d/%d passed'):format(passed, #tests))
 end, true)
 
 RegisterCommand('ChatThemeContractSmokeTest', function(source)

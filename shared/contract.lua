@@ -105,8 +105,66 @@ function ChatContract.ValidateConfig(config)
     end
     if type(config.RateLimit) ~= 'table'
         or not PositiveInteger(config.RateLimit.windowMs, 60000)
-        or not PositiveInteger(config.RateLimit.maxMessages, 100) then
+        or not PositiveInteger(config.RateLimit.maxMessages, 100)
+        or not PositiveInteger(config.RateLimit.repeatedWindowMs, 60000)
+        or not PositiveInteger(config.RateLimit.maxRepeatedMessages, 20)
+        or type(config.RateLimit.channelProfiles) ~= 'table' then
         return ChatResults.Err('invalid_configuration', 'Chat rate-limit configuration is invalid.')
+    end
+    for channelKey, profile in pairs(config.RateLimit.channelProfiles) do
+        if type(channelKey) ~= 'string' or type(profile) ~= 'table'
+            or not PositiveInteger(profile.windowMs, 60000)
+            or not PositiveInteger(profile.maxMessages, 100) then
+            return ChatResults.Err('invalid_configuration', 'Chat channel rate-limit profile is invalid.')
+        end
+    end
+    local moderation = config.Moderation
+    local mutes = type(moderation) == 'table' and moderation.mutes or nil
+    local controls = type(moderation) == 'table' and moderation.playerControls or nil
+    local bypass = type(moderation) == 'table' and moderation.staffBypass or nil
+    local audit = type(moderation) == 'table' and moderation.audit or nil
+    local providers = type(moderation) == 'table' and moderation.providers or nil
+    local trustedCallers = type(moderation) == 'table' and moderation.trustedCallers or nil
+    local validScopes, seenScopes = { all=true, channel=true, ooc=true }, {}
+    if type(mutes) ~= 'table' or type(mutes.enabled) ~= 'boolean'
+        or type(mutes.allowedScopes) ~= 'table' or #mutes.allowedScopes < 1
+        or #mutes.allowedScopes > 3 or type(mutes.permanentAllowed) ~= 'boolean'
+        or not PositiveInteger(mutes.maximumDurationMinutes, 525600)
+        or mutes.persistenceRequired ~= true then
+        return ChatResults.Err('invalid_configuration', 'Chat mute configuration is invalid.')
+    end
+    for _, scope in ipairs(mutes.allowedScopes) do
+        if not validScopes[scope] or seenScopes[scope] then
+            return ChatResults.Err('invalid_configuration', 'Chat mute scope configuration is invalid.')
+        end
+        seenScopes[scope] = true
+    end
+    if type(controls) ~= 'table' or type(controls.ignoreEnabled) ~= 'boolean'
+        or (controls.ignoreSubjectScope ~= 'account' and controls.ignoreSubjectScope ~= 'character')
+        or not PositiveInteger(controls.maximumIgnoredSubjects, 500) then
+        return ChatResults.Err('invalid_configuration', 'Chat ignore configuration is invalid.')
+    end
+    if type(bypass) ~= 'table' or bypass.system ~= true
+        or bypass.moderation ~= true or bypass.staffChannel ~= true
+        or bypass.staffCase ~= true or bypass.ordinaryPlayerChat ~= false
+        or type(providers) ~= 'table' or type(providers.enabled) ~= 'boolean'
+        or type(providers.required) ~= 'boolean'
+        or (providers.required and not providers.enabled)
+        or not PositiveInteger(providers.maximumRegistered, 32)
+        or type(trustedCallers) ~= 'table'
+        or type(audit) ~= 'table' or type(audit.enabled) ~= 'boolean'
+        or audit.includeMessageBody ~= false then
+        return ChatResults.Err('invalid_configuration', 'Chat moderation policy is invalid.')
+    end
+    local trustedCount = 0
+    for resource, allowed in pairs(trustedCallers) do
+        trustedCount = trustedCount + 1
+        if type(resource) ~= 'string' or #resource < 3 or #resource > 64 or allowed ~= true then
+            return ChatResults.Err('invalid_configuration', 'Chat moderation caller policy is invalid.')
+        end
+    end
+    if trustedCount < 1 or trustedCount > 16 then
+        return ChatResults.Err('invalid_configuration', 'Chat requires a bounded trusted moderation caller list.')
     end
     if type(config.Layout) ~= 'table' or not ChatContract.Anchors[config.Layout.anchor]
         or not ChatContract.Densities[config.Layout.density]
@@ -178,6 +236,33 @@ function ChatContract.ValidateSubmission(payload, limits)
     end
     if #payload.text < 1 or #payload.text > limits.maxMessageBytes then
         return false, ChatResults.Err('invalid_message', 'Message length is invalid.')
+    end
+    return true
+end
+
+function ChatContract.ValidateIgnoreRequest(payload)
+    if type(payload) ~= 'table' or type(payload.messageId) ~= 'string'
+        or #payload.messageId ~= 36
+        or payload.messageId:match('^[0-9a-fA-F%-]+$') == nil then
+        return false, ChatResults.Err('invalid_input', 'Ignore request is invalid.')
+    end
+    for key in pairs(payload) do
+        if key ~= 'messageId' then
+            return false, ChatResults.Err('invalid_input', 'Ignore request contains an unknown field.')
+        end
+    end
+    return true
+end
+
+function ChatContract.ValidateIgnoreRemove(payload)
+    if type(payload) ~= 'table' or type(payload.ignoreId) ~= 'string'
+        or #payload.ignoreId ~= 36 or payload.ignoreId:match('^[0-9a-fA-F%-]+$') == nil then
+        return false, ChatResults.Err('invalid_input', 'Ignore removal request is invalid.')
+    end
+    for key in pairs(payload) do
+        if key ~= 'ignoreId' then
+            return false, ChatResults.Err('invalid_input', 'Ignore removal contains an unknown field.')
+        end
     end
     return true
 end

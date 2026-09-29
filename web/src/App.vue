@@ -38,6 +38,8 @@ type Theme = {
 }
 
 type SubmitResult = { ok: boolean; message?: string }
+type IgnoreResult = SubmitResult & { value?: { ignored?: boolean; displayName?: string } }
+type IgnoreEntry = { ignoreId: string; displayName: string; scope: string; createdAt: string }
 type Channel = { channelKey: string; label: string }
 type Suggestion = { key: string; trigger: string; description: string; channelKey?: string }
 
@@ -51,6 +53,12 @@ const messages = ref<ChatMessage[]>([])
 const error = ref('')
 const submitting = ref(false)
 const unreadMessages = ref(0)
+const contextMenu = ref<{ message: ChatMessage; x: number; y: number } | null>(null)
+const ignoredAuthors = ref(new Set<string>())
+const changingIgnore = ref(false)
+const showIgnores = ref(false)
+const ignores = ref<IgnoreEntry[]>([])
+const ignoreEnabled = ref(false)
 const channels = ref<Channel[]>([
   { channelKey: 'local.say', label: 'Say' },
   { channelKey: 'local.whisper', label: 'Whisper' },
@@ -109,6 +117,7 @@ const selectedFilterLabel = computed(() => channels.value
   .find((channel) => channel.channelKey === selectedFilter.value)?.label)
 
 function selectFilter(channelKey: string) {
+  showIgnores.value = false
   selectedFilter.value = channelKey
   selectedChannel.value = channelKey === 'all' ? 'local.say' : channelKey
   unreadMessages.value = 0
@@ -162,7 +171,61 @@ async function scrollFeedToBottom() {
 }
 
 function handleFeedScroll() {
+  contextMenu.value = null
   if (feedIsAtBottom()) unreadMessages.value = 0
+}
+
+function messageIsIgnorable(message: ChatMessage) {
+  return !['system', 'moderation', 'staff', 'staff_channel', 'staff_case'].includes(message.kind)
+}
+
+function openMessageMenu(event: MouseEvent, message: ChatMessage) {
+  if (!open.value || !messageIsIgnorable(message)) return
+  contextMenu.value = {
+    message,
+    x: Math.min(event.clientX, window.innerWidth - 230),
+    y: Math.min(event.clientY, window.innerHeight - 70),
+  }
+}
+
+async function toggleIgnore() {
+  const selected = contextMenu.value?.message
+  if (!selected || changingIgnore.value) return
+  changingIgnore.value = true
+  const result = await nui<IgnoreResult>('chat:ignore-toggle', { messageId: selected.messageId })
+  changingIgnore.value = false
+  if (!result?.ok) {
+    error.value = result?.message || 'Ignore preference could not be saved.'
+    contextMenu.value = null
+    return
+  }
+  const next = new Set(ignoredAuthors.value)
+  if (result.value?.ignored) next.add(selected.author.characterId)
+  else next.delete(selected.author.characterId)
+  ignoredAuthors.value = next
+  error.value = `${result.value?.displayName || selected.author.displayName} ${result.value?.ignored ? 'ignored' : 'unignored'}.`
+  contextMenu.value = null
+}
+
+async function openIgnores() {
+  contextMenu.value = null
+  const result = await nui<{ ok: boolean; message?: string; value?: { ignores?: IgnoreEntry[] } }>('chat:ignore-list')
+  if (!result?.ok) {
+    error.value = result?.message || 'Ignored players could not be loaded.'
+    return
+  }
+  ignores.value = Array.isArray(result.value?.ignores) ? result.value.ignores : []
+  showIgnores.value = true
+}
+
+async function removeIgnore(entry: IgnoreEntry) {
+  const result = await nui<SubmitResult>('chat:ignore-remove', { ignoreId: entry.ignoreId })
+  if (!result?.ok) {
+    error.value = result?.message || 'Ignore preference could not be removed.'
+    return
+  }
+  ignores.value = ignores.value.filter((item) => item.ignoreId !== entry.ignoreId)
+  error.value = `${entry.displayName} unignored.`
 }
 
 function scheduleFeedFade() {
@@ -189,6 +252,8 @@ function receive(event: MessageEvent) {
     void scrollFeedToBottom()
     requestAnimationFrame(() => composer.value?.focus())
   } else if (message.type === 'chat:close') {
+    contextMenu.value = null
+    showIgnores.value = false
     open.value = false
     input.value = ''
     error.value = ''
@@ -199,6 +264,7 @@ function receive(event: MessageEvent) {
     visible.value = message.visible === true
   } else if (message.type === 'chat:bootstrap' && message.config) {
     applyPresentation(message.config)
+    ignoreEnabled.value = message.config.ignoreEnabled === true
     if (Array.isArray(message.messages)) {
       messages.value = message.messages
       void scrollFeedToBottom()
@@ -285,9 +351,14 @@ function keydown(event: KeyboardEvent) {
   }
 }
 
+function closeContextMenu() {
+  contextMenu.value = null
+}
+
 onMounted(() => {
   window.addEventListener('message', receive)
   window.addEventListener('keydown', keydown)
+  window.addEventListener('click', closeContextMenu)
   void nui('chat:ready')
 })
 
@@ -296,6 +367,7 @@ onBeforeUnmount(() => {
   window.clearTimeout(errorTimer)
   window.removeEventListener('message', receive)
   window.removeEventListener('keydown', keydown)
+  window.removeEventListener('click', closeContextMenu)
 })
 </script>
 
@@ -311,7 +383,7 @@ onBeforeUnmount(() => {
       <nav class="channel-tabs" aria-label="Chat channels">
         <button
           class="channel"
-          :class="{ active: selectedFilter === 'all' }"
+          :class="{ active: !showIgnores && selectedFilter === 'all' }"
           type="button"
           @click="selectFilter('all')"
         >
@@ -321,19 +393,39 @@ onBeforeUnmount(() => {
           v-for="channel in channels"
           :key="channel.channelKey"
           class="channel"
-          :class="{ active: selectedFilter === channel.channelKey }"
+          :class="{ active: !showIgnores && selectedFilter === channel.channelKey }"
           type="button"
           @click="selectFilter(channel.channelKey)"
         >
           {{ channel.label }}
         </button>
+        <button
+          v-if="ignoreEnabled"
+          class="channel ignored-players-button"
+          :class="{ active: showIgnores }"
+          type="button"
+          :aria-pressed="showIgnores"
+          @click="showIgnores ? showIgnores = false : openIgnores()"
+        >
+          Ignored
+        </button>
       </nav>
-      <div v-if="filteredMessages.length === 0" class="empty-state">
+      <div v-if="showIgnores" class="ignored-players" aria-label="Ignored players">
+        <strong>Ignored players</strong>
+        <span v-if="ignores.length === 0" class="ignored-empty">No ignored players.</span>
+        <div v-for="entry in ignores" v-else :key="entry.ignoreId" class="ignored-entry">
+          <span>{{ entry.displayName }}</span>
+          <button type="button" @click="removeIgnore(entry)">
+            Unignore
+          </button>
+        </div>
+      </div>
+      <div v-else-if="filteredMessages.length === 0" class="empty-state">
         <strong>Feather Chat</strong>
         <span>{{ selectedFilter === 'all' ? 'No messages yet.' : `No ${selectedFilterLabel || 'channel'} messages yet.` }}</span>
       </div>
       <ol
-        v-else
+        v-else-if="!showIgnores"
         ref="messageList"
         class="message-list"
         aria-label="Recent messages"
@@ -345,6 +437,7 @@ onBeforeUnmount(() => {
           class="message"
           :data-variant="message.presentation.variant"
           :style="messageStyle(message)"
+          @contextmenu.prevent.stop="openMessageMenu($event, message)"
         >
           <span class="author">{{ message.author.displayName }}</span>
           <span v-if="selectedFilter === 'all'" class="message-channel">
@@ -361,6 +454,18 @@ onBeforeUnmount(() => {
           </time>
         </li>
       </ol>
+      <div
+        v-if="contextMenu"
+        class="message-context-menu"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        role="menu"
+        @click.stop
+      >
+        <button type="button" role="menuitem" :disabled="changingIgnore" @click="toggleIgnore">
+          {{ ignoredAuthors.has(contextMenu.message.author.characterId) ? 'Unignore' : 'Ignore' }}
+          {{ contextMenu.message.author.displayName }}
+        </button>
+      </div>
       <button
         v-if="unreadMessages > 0"
         type="button"

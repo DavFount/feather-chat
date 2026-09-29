@@ -6,7 +6,7 @@ lua54 'yes'
 name 'feather-chat'
 description 'Feather official chat resource for RedM. This resource is a part of the Feather Framework.'
 author 'Feather Framework'
-version '0.1.0'
+version '0.1.0-alpha.1'
 
 ui_page 'ui/index.html'
 
@@ -27,10 +27,12 @@ client_scripts {
 }
 
 server_scripts {
+    '@feather-mysql/lib/DB.lua',
     'server/channels.lua',
     'server/themes.lua',
+    'server/moderation.lua',
     'server/messaging.lua',
     'server/main.lua'
 }
 
-dependency 'feather-core'
+dependencies { 'feather-mysql', 'feather-core' }
