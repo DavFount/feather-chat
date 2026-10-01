@@ -36,7 +36,7 @@ jobs:
       - name: Package resource
         uses: vimtor/action-zip@v1
         with:
-          files: fxmanifest.lua LICENSE README.md config.lua client server shared ui
+          files: fxmanifest.lua LICENSE README.md config.lua client server shared translations ui
           recursive: false
           dest: feather-chat.zip
       - name: Upload tested package

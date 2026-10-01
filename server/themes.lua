@@ -34,7 +34,7 @@ local function Register(definition, forcedOwner)
     local valid, reason = ChatContract.ValidateTheme(definition)
     if not valid then return reason end
     if themes[definition.themeKey] then
-        return ChatResults.Err('conflict', 'That theme key is already registered.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_that_theme_key_is_already_registered'))
     end
     local stored = Copy(definition)
     stored.ownerResource, stored.revision = forcedOwner or Owner(), 1
@@ -45,13 +45,13 @@ end
 
 local function Update(themeKey, definition, expectedRevision)
     local current = themes[themeKey]
-    if not current then return ChatResults.Err('not_found', 'Theme is not registered.') end
+    if not current then return ChatResults.Err('not_found', ChatLocale.T('error_theme_is_not_registered')) end
     if current.ownerResource ~= Owner() then
-        return ChatResults.Err('forbidden', 'Only the theme owner may update it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_theme_owner_may_update_it'))
     end
     if tonumber(expectedRevision) ~= current.revision or type(definition) ~= 'table'
         or definition.themeKey ~= themeKey then
-        return ChatResults.Err('conflict', 'Theme revision changed.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_theme_revision_changed'))
     end
     local candidate = Copy(definition)
     candidate.revision = nil
@@ -66,12 +66,12 @@ end
 
 local function Remove(themeKey, forcedOwner)
     local current = themes[themeKey]
-    if not current then return ChatResults.Err('not_found', 'Theme is not registered.') end
+    if not current then return ChatResults.Err('not_found', ChatLocale.T('error_theme_is_not_registered')) end
     if themeKey == 'feather.default' or themeKey == 'feather.high_contrast' then
-        return ChatResults.Err('forbidden', 'Built-in themes cannot be removed.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_built_in_themes_cannot_be_removed'))
     end
     if current.ownerResource ~= (forcedOwner or Owner()) then
-        return ChatResults.Err('forbidden', 'Only the theme owner may remove it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_theme_owner_may_remove_it'))
     end
     themes[themeKey] = nil
     Publish()
@@ -116,7 +116,7 @@ function ChatThemes.Start()
         end
     end
     if not themes[Config.Theme.default] then
-        return ChatResults.Err('invalid_configuration', 'The configured default theme is unavailable.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_the_configured_default_theme_is_unavailable'))
     end
     return ChatResults.Ok(true)
 end
@@ -133,7 +133,7 @@ function ChatThemes.RegisterRoutes()
         windowMs=2000, maxCalls=4, maxPayloadBytes=64, maxDepth=2, maxNodes=4,
         validatePayload=function(payload)
             return type(payload) == 'table' and next(payload) == nil,
-                ChatResults.Err('invalid_input', 'No theme-list fields are accepted.')
+                ChatResults.Err('invalid_input', ChatLocale.T('error_no_theme_list_fields_are_accepted'))
         end
     })
 end

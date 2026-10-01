@@ -1,7 +1,7 @@
 # Feather Chat
 
 Feather Chat is the official server-authoritative text communication resource
-for Feather Framework. The current `0.1.0-alpha.1` development slice contains the
+for Feather Framework. The current `0.1.0` release contains the
 Contract 1 lifecycle, validated operator configuration, health/capability
 exports, focus recovery, a themed Vue NUI, and server-authoritative local chat.
 
@@ -23,6 +23,45 @@ server restarts.
 ### Configuration
 
 Most servers should retain the safe defaults in `config.lua`.
+
+### Player language and translation contributions
+
+Chat uses the standard Feather Core `RegisterLocale` / `TranslateLocale` system,
+not a separate server-wide Chat language setting. Players choose their account
+language in Feather Settings. Chat sends the resulting translated dictionary to
+its NUI and refreshes labels when Core emits `feather-core:locale:changed`, and
+whenever Chat opens. Chat presentation controls re-register after language changes.
+
+Contribute translations in `translations/<language>.lua`, using the same
+`Feather.Locale.register('<language>', { ... })` adapter as Inventory and the
+`feather_chat_` keys in `translations/en_us.lua`. Preserve `{name}`, `{count}`, `{channel}`
+and `{code}` placeholders. Missing Chat keys fall back to English. Initial Spanish
+UI coverage is included; other languages and remaining Admin/operator text still
+need translation coverage. `translations/` is the single catalog for Lua and NUI:
+Lua resolves Core's player language and English fallback, then sends a plain
+key-to-string bundle to the NUI. There is no separate JavaScript/JSON catalog.
+
+Error results retain stable `code` fields and may include `messageKey` so the
+receiving client translates server validation messages in its own language.
+Production operator messages also use locale keys, resolved using Core's default
+server language, while codes/resource identifiers and smoke-test markers remain
+stable. Operator format templates are never sent to the NUI label bundle.
+Chat never translates player message bodies or third-party channel names.
+
+Run `ChatLocaleSmokeTest` in the **server console**, with no connected player
+required and no database writes. In game, an active player can select Spanish in
+Settings, verify Chat tabs/settings/Staff labels change, return to English, and
+verify the choice persists on reconnect. Admin rank is not needed for language
+testing. Languages without complete catalogs should show readable English fallback.
+The Core language-change event requires its updated code to load at the next
+normal server startup; do not restart Core or Character during live Chat testing.
+
+Install the published `feather-chat.zip` runtime package, not the web source tree.
+The recipe downloads the latest stable release and starts Chat before its
+Character/Inventory/Admin integrations. Do not also ensure CFX/BCC/VORP chat.
+Existing installations may have legacy chat copied locally; remove it from their
+start configuration before enabling Chat. The recipe removes the unused bundled
+CFX chat example theme; the currently downloaded CFX tree contains no chat resource.
 
 | Section | Purpose |
 | --- | --- |
@@ -225,6 +264,67 @@ exports['feather-chat']:RegisterSuggestion({
 ```
 
 Chat removes that suggestion automatically when its owning resource stops.
+
+Suggestions must be registered from the owning resource's **server** script,
+both at startup (once `GetHealth().value.state == 'ready'`) and on the local
+`chat.ready.v1` event. Clear any registration guard on `onResourceStop` for
+`feather-chat`; Chat's registry is rebuilt on every restart. Startup registration
+handles consumers started after Chat, while the readiness event handles the
+opposite order and Chat-only restarts. Do not use legacy `chat:addSuggestion`.
+Triggers preserve command casing; autocomplete matches case-insensitively.
+Suggestions may include `descriptionKey`, a standard Core locale key registered
+by their owner on clients. Chat resolves it in each player's language; missing
+keys retain the provided `description` fallback.
+
+An optional `accessProvider` names an access provider registered by the same
+resource through `RegisterChannelAccessProvider`. Its `CanView` receives
+`{ actor=actor, suggestionKey=key }`; denial or provider failure hides the
+suggestion. This controls discovery only, never command authorization.
+
+### First-party command suggestion audit
+
+The Feather-only audit excludes `feather-weapons`. Admin advertises its configured
+menu command only to authorized staff, and its enabled report command to players.
+Character advertises `/logout` and `/savequit`; Inventory advertises
+`/open_inventory` and `/close_inventory`. Chat already advertises its channel
+aliases. The development mock provider restores `/mock` and its channel on Chat
+readiness. Other Feather registrations are diagnostics, smoke tests, console-only
+or developer-only commands and are intentionally not advertised.
+
+Run `ChatSuggestionContractSmokeTest` in the **server console**; no connected
+player is required. It temporarily registers/removes synthetic suggestions and
+performs no database writes. Live restart acceptance requires an active character:
+check suggestions, run `restart feather-chat` in the server console, then reopen
+Chat and verify they return without restarting their owners. Check the Admin menu
+suggestion with both an authorized staff character and a nonstaff character;
+the latter must not see it. Actual commands retain their own authorization.
+Load updated consumer code first; Character's integration must wait for a normal
+server startup—do not restart `feather-character` during live testing. No manifest
+changes are needed for this integration.
+
+## Staff conversations (C7 preview)
+
+With `feather-admin` installed, open Chat and select **Staff** to view authorized
+staff-to-player conversations. Staff initiates from Admin's selected-player
+workflow; players cannot initiate conversations or close them. There are no
+player-to-player DMs. Admin's Your Conversations entry reopens staff management
+for replies, close/archive and internal-case links. `/staffchat` is removed;
+players use Chat -> Staff, which does not open the Admin menu.
+
+Messages persist in Admin-owned database tables. Closed/archived conversations
+remain read-only and readable. Open Staff views update after committed-message
+notifications; Refresh is a recovery control, not required for normal replies.
+Use Next messages
+for subsequent history pages; history pages currently start at the earliest
+message. Notifications never steal focus. Account-scoped participation survives
+character changes, but each request requires a current character session; staff
+permissions remain attached to the active character. Internal staff notes,
+account IDs and moderation case summaries are excluded from player history.
+
+Archive policy is configured in Admin's `Config.chatConversations`; archiving
+does not delete messages. C7's two-player authorization, message exchange,
+privacy, persistence/restart and navigation acceptance passed. Final presentation
+polish and release localization remain planned work.
 
 ## UI development
 

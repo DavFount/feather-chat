@@ -6,7 +6,7 @@ lua54 'yes'
 name 'feather-chat'
 description 'Feather official chat resource for RedM. This resource is a part of the Feather Framework.'
 author 'Feather Framework'
-version '0.1.0-alpha.1'
+version '0.1.0'
 
 ui_page 'ui/index.html'
 
@@ -17,6 +17,9 @@ files {
 
 shared_scripts {
     'config.lua',
+    'shared/imports.lua',
+    'translations/*.lua',
+    'shared/locale.lua',
     'shared/results.lua',
     'shared/contract.lua'
 }

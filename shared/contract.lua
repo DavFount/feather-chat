@@ -64,11 +64,11 @@ function ChatContract.ValidateTheme(theme)
         or not ExactKeys(theme.motion, { 'enabled', 'durationMs' })
         or type(theme.motion.enabled) ~= 'boolean'
         or not NumberInRange(theme.motion.durationMs, 0, 500) then
-        return false, ChatResults.Err('invalid_theme', 'Theme document is invalid.')
+        return false, ChatResults.Err('invalid_theme', ChatLocale.T('error_theme_document_is_invalid'))
     end
     for _, key in ipairs(ChatContract.ThemeTokenKeys) do
         if not Color(theme.channelTokens[key]) then
-            return false, ChatResults.Err('invalid_theme', 'Theme channel token is invalid.', { token=key })
+            return false, ChatResults.Err('invalid_theme', ChatLocale.T('error_theme_channel_token_is_invalid'), { token=key })
         end
     end
     return true
@@ -76,21 +76,21 @@ end
 
 function ChatContract.ValidateConfig(config)
     if type(config) ~= 'table' then
-        return ChatResults.Err('invalid_configuration', 'Chat configuration must be a table.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_configuration_must_be_a_table'))
     end
     if type(config.Input) ~= 'table' or type(config.Input.command) ~= 'string'
         or config.Input.command == '' or #config.Input.command > 32
         or type(config.Input.defaultKey) ~= 'string' or config.Input.defaultKey == ''
         or #config.Input.defaultKey > 32 or type(config.Input.closeOnSubmit) ~= 'boolean' then
-        return ChatResults.Err('invalid_configuration', 'Chat input configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_input_configuration_is_invalid'))
     end
     if type(config.Channels) ~= 'table' or type(config.Channels.oocEnabled) ~= 'boolean'
         or type(config.Channels.proximity) ~= 'table' then
-        return ChatResults.Err('invalid_configuration', 'Chat channel configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_channel_configuration_is_invalid'))
     end
     for _, key in ipairs({ 'whisper', 'say', 'roleplay', 'shout' }) do
         if not NumberInRange(config.Channels.proximity[key], 1.0, 100.0) then
-            return ChatResults.Err('invalid_configuration', 'Chat proximity configuration is invalid.', {
+            return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_proximity_configuration_is_invalid'), {
                 field = 'Channels.proximity.' .. key
             })
         end
@@ -101,7 +101,7 @@ function ChatContract.ValidateConfig(config)
         or not PositiveInteger(config.Limits.maxClientBuffer, 500)
         or not PositiveInteger(config.Limits.maxInputHistory, 100)
         or not PositiveInteger(config.Limits.callbackTimeoutMs, 30000) then
-        return ChatResults.Err('invalid_configuration', 'Chat limit configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_limit_configuration_is_invalid'))
     end
     if type(config.RateLimit) ~= 'table'
         or not PositiveInteger(config.RateLimit.windowMs, 60000)
@@ -109,13 +109,13 @@ function ChatContract.ValidateConfig(config)
         or not PositiveInteger(config.RateLimit.repeatedWindowMs, 60000)
         or not PositiveInteger(config.RateLimit.maxRepeatedMessages, 20)
         or type(config.RateLimit.channelProfiles) ~= 'table' then
-        return ChatResults.Err('invalid_configuration', 'Chat rate-limit configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_rate_limit_configuration_is_invalid'))
     end
     for channelKey, profile in pairs(config.RateLimit.channelProfiles) do
         if type(channelKey) ~= 'string' or type(profile) ~= 'table'
             or not PositiveInteger(profile.windowMs, 60000)
             or not PositiveInteger(profile.maxMessages, 100) then
-            return ChatResults.Err('invalid_configuration', 'Chat channel rate-limit profile is invalid.')
+            return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_channel_rate_limit_profile_is_invalid'))
         end
     end
     local moderation = config.Moderation
@@ -131,18 +131,18 @@ function ChatContract.ValidateConfig(config)
         or #mutes.allowedScopes > 3 or type(mutes.permanentAllowed) ~= 'boolean'
         or not PositiveInteger(mutes.maximumDurationMinutes, 525600)
         or mutes.persistenceRequired ~= true then
-        return ChatResults.Err('invalid_configuration', 'Chat mute configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_mute_configuration_is_invalid'))
     end
     for _, scope in ipairs(mutes.allowedScopes) do
         if not validScopes[scope] or seenScopes[scope] then
-            return ChatResults.Err('invalid_configuration', 'Chat mute scope configuration is invalid.')
+            return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_mute_scope_configuration_is_invalid'))
         end
         seenScopes[scope] = true
     end
     if type(controls) ~= 'table' or type(controls.ignoreEnabled) ~= 'boolean'
         or (controls.ignoreSubjectScope ~= 'account' and controls.ignoreSubjectScope ~= 'character')
         or not PositiveInteger(controls.maximumIgnoredSubjects, 500) then
-        return ChatResults.Err('invalid_configuration', 'Chat ignore configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_ignore_configuration_is_invalid'))
     end
     if type(bypass) ~= 'table' or bypass.system ~= true
         or bypass.moderation ~= true or bypass.staffChannel ~= true
@@ -154,17 +154,17 @@ function ChatContract.ValidateConfig(config)
         or type(trustedCallers) ~= 'table'
         or type(audit) ~= 'table' or type(audit.enabled) ~= 'boolean'
         or audit.includeMessageBody ~= false then
-        return ChatResults.Err('invalid_configuration', 'Chat moderation policy is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_moderation_policy_is_invalid'))
     end
     local trustedCount = 0
     for resource, allowed in pairs(trustedCallers) do
         trustedCount = trustedCount + 1
         if type(resource) ~= 'string' or #resource < 3 or #resource > 64 or allowed ~= true then
-            return ChatResults.Err('invalid_configuration', 'Chat moderation caller policy is invalid.')
+            return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_moderation_caller_policy_is_invalid'))
         end
     end
     if trustedCount < 1 or trustedCount > 16 then
-        return ChatResults.Err('invalid_configuration', 'Chat requires a bounded trusted moderation caller list.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_requires_a_bounded_trusted_moderation_caller_list'))
     end
     if type(config.Layout) ~= 'table' or not ChatContract.Anchors[config.Layout.anchor]
         or not ChatContract.Densities[config.Layout.density]
@@ -175,22 +175,22 @@ function ChatContract.ValidateConfig(config)
         or not NumberInRange(config.Layout.fontScale, 0.75, 1.5)
         or type(config.Layout.timestamps) ~= 'boolean'
         or type(config.Layout.reducedMotion) ~= 'boolean' then
-        return ChatResults.Err('invalid_configuration', 'Chat layout configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_layout_configuration_is_invalid'))
     end
     if type(config.Theme) ~= 'table' or not ThemeKey(config.Theme.default)
         or type(config.Theme.approved) ~= 'table' or #config.Theme.approved < 1
         or #config.Theme.approved > 16 then
-        return ChatResults.Err('invalid_configuration', 'Chat theme configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_theme_configuration_is_invalid'))
     end
     local approvedThemes = {}
     for _, theme in ipairs(config.Theme.approved) do
         if not ThemeKey(theme) or approvedThemes[theme] then
-            return ChatResults.Err('invalid_configuration', 'Chat approved theme is invalid.', { theme=theme })
+            return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_approved_theme_is_invalid'), { theme=theme })
         end
         approvedThemes[theme] = true
     end
     if not approvedThemes[config.Theme.default] then
-        return ChatResults.Err('invalid_configuration', 'Chat default theme must be approved.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_default_theme_must_be_approved'))
     end
     local preferences = config.Preferences
     if type(preferences) ~= 'table' or type(preferences.theme) ~= 'boolean'
@@ -208,12 +208,12 @@ function ChatContract.ValidateConfig(config)
         or not NumberInRange(preferences.idleOpacity.maximum, 0.1, 1.0)
         or preferences.idleOpacity.minimum > preferences.idleOpacity.maximum
         or not NumberInRange(preferences.idleOpacity.step, 0.01, 0.25) then
-        return ChatResults.Err('invalid_configuration', 'Chat preference configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_preference_configuration_is_invalid'))
     end
     if type(config.Features) ~= 'table' or type(config.Features.history) ~= 'boolean'
         or type(config.Features.privateMessages) ~= 'boolean'
         or type(config.Features.emojiPicker) ~= 'boolean' then
-        return ChatResults.Err('invalid_configuration', 'Chat feature configuration is invalid.')
+        return ChatResults.Err('invalid_configuration', ChatLocale.T('error_chat_feature_configuration_is_invalid'))
     end
     return ChatResults.Ok(true)
 end
@@ -227,15 +227,15 @@ function ChatContract.ValidateSubmission(payload, limits)
         or type(payload.text) ~= 'string' or type(payload.submissionId) ~= 'string'
         or #payload.submissionId < 1 or #payload.submissionId > 64
         or payload.submissionId:match('^[%w:_%-]+$') == nil then
-        return false, ChatResults.Err('invalid_input', 'Chat submission is invalid.')
+        return false, ChatResults.Err('invalid_input', ChatLocale.T('error_chat_submission_is_invalid'))
     end
     for key in pairs(payload) do
         if allowed[key] ~= true then
-            return false, ChatResults.Err('invalid_input', 'Chat submission contains an unknown field.')
+            return false, ChatResults.Err('invalid_input', ChatLocale.T('error_chat_submission_contains_an_unknown_field'))
         end
     end
     if #payload.text < 1 or #payload.text > limits.maxMessageBytes then
-        return false, ChatResults.Err('invalid_message', 'Message length is invalid.')
+        return false, ChatResults.Err('invalid_message', ChatLocale.T('error_message_length_is_invalid'))
     end
     return true
 end
@@ -244,11 +244,11 @@ function ChatContract.ValidateIgnoreRequest(payload)
     if type(payload) ~= 'table' or type(payload.messageId) ~= 'string'
         or #payload.messageId ~= 36
         or payload.messageId:match('^[0-9a-fA-F%-]+$') == nil then
-        return false, ChatResults.Err('invalid_input', 'Ignore request is invalid.')
+        return false, ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_request_is_invalid'))
     end
     for key in pairs(payload) do
         if key ~= 'messageId' then
-            return false, ChatResults.Err('invalid_input', 'Ignore request contains an unknown field.')
+            return false, ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_request_contains_an_unknown_field'))
         end
     end
     return true
@@ -257,11 +257,11 @@ end
 function ChatContract.ValidateIgnoreRemove(payload)
     if type(payload) ~= 'table' or type(payload.ignoreId) ~= 'string'
         or #payload.ignoreId ~= 36 or payload.ignoreId:match('^[0-9a-fA-F%-]+$') == nil then
-        return false, ChatResults.Err('invalid_input', 'Ignore removal request is invalid.')
+        return false, ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_removal_request_is_invalid'))
     end
     for key in pairs(payload) do
         if key ~= 'ignoreId' then
-            return false, ChatResults.Err('invalid_input', 'Ignore removal contains an unknown field.')
+            return false, ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_removal_contains_an_unknown_field'))
         end
     end
     return true

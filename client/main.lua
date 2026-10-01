@@ -17,16 +17,24 @@ local function ApplyFocus(open)
 end
 
 local function OpenChat()
-    if not state.visible then return ChatResults.Err('not_visible', 'Chat is currently hidden.') end
+    if not state.visible then return ChatResults.Err('not_visible', ChatLocale.T('error_chat_is_currently_hidden')) end
+    Ui({ type='chat:locale', locale=ChatLocale.Dictionary(),
+        ignoreEnabled=Config.Moderation.playerControls.ignoreEnabled })
     if RefreshDirectory then RefreshDirectory() end
     return ApplyFocus(true)
 end
+
+AddEventHandler('feather-core:locale:changed', function()
+    Ui({ type='chat:locale', locale=ChatLocale.Dictionary(),
+        ignoreEnabled=Config.Moderation.playerControls.ignoreEnabled })
+    if state.open and RefreshDirectory then CreateThread(RefreshDirectory) end
+end)
 
 local function CloseChat() return ApplyFocus(false) end
 
 local function SetChatVisible(visible)
     if type(visible) ~= 'boolean' then
-        return ChatResults.Err('invalid_input', 'Chat visibility must be a boolean.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_chat_visibility_must_be_a_boolean'))
     end
     state.visible = visible
     if not visible then ApplyFocus(false) end
@@ -39,10 +47,39 @@ exports('CloseChat', CloseChat)
 exports('SetChatVisible', SetChatVisible)
 exports('GetChatState', function() return ChatResults.Ok(Snapshot()) end)
 
+RegisterNUICallback('chat:case', function(data, callback)
+    if GetResourceState('feather-admin') ~= 'started' then return callback({ ok=false }) end
+    if type(data) ~= 'table' or type(data.payload) ~= 'table'
+        or (data.operation ~= 'list' and data.operation ~= 'history' and data.operation ~= 'reply') then
+        return callback({ ok=false })
+    end
+    if type(data.requestId) ~= 'string' or #data.requestId ~= 36 then return callback({ ok=false }) end
+    TriggerEvent('feather-admin:conversation:panel-request', data.operation, data.payload, data.requestId)
+    callback({ ok=true })
+end)
+
+AddEventHandler('feather-chat:conversation:panel-result', function(operation, result, requestId)
+    Ui({ type='chat:case:result', operation=operation, result=result, requestId=requestId })
+end)
+AddEventHandler('feather-chat:conversation:updated', function(hint)
+    Ui({ type='chat:case:updated', hint=hint })
+end)
+
+AddEventHandler('feather-chat:conversation:reset', function()
+    Ui({ type='chat:case:reset' })
+    CloseChat()
+end)
+AddEventHandler('onClientResourceStop', function(resource)
+    if resource == 'feather-admin' or resource == 'feather-core' then
+        Ui({ type='chat:case:reset' })
+        CloseChat()
+    end
+end)
+
 RegisterCommand(Config.Input.command, function()
     if state.open then CloseChat() else OpenChat() end
 end, false)
-RegisterKeyMapping(Config.Input.command, 'Open Feather Chat', 'keyboard', Config.Input.defaultKey)
+RegisterKeyMapping(Config.Input.command, ChatLocale.T('ui_open_feather_chat'), 'keyboard', Config.Input.defaultKey)
 
 RegisterNUICallback('chat:ready', function(_, callback)
     state.uiReady = true
@@ -51,7 +88,7 @@ RegisterNUICallback('chat:ready', function(_, callback)
         type='chat:bootstrap',
         config={ layout=presentation.layout, theme=presentation.theme,
             themeDocument=presentation.themeDocument, themeRevision=presentation.themeRevision,
-            limits=Config.Limits, ignoreEnabled=Config.Moderation.playerControls.ignoreEnabled },
+            locale=ChatLocale.Dictionary(), limits=Config.Limits, ignoreEnabled=Config.Moderation.playerControls.ignoreEnabled },
         messages=state.messages, channels=state.channels, suggestions=state.suggestions
     })
     callback({ ok=true })
@@ -67,9 +104,9 @@ local function Submit(channelKey, text)
         }, nil, Config.Limits.callbackTimeoutMs)
     if type(result) ~= 'table' then
         return ChatResults.Err(transportError and transportError.code or 'transport_failed',
-            transportError and transportError.message or 'Chat submission failed.')
+            ChatLocale.T('error_chat_submission_failed'))
     end
-    return result
+    return ChatLocale.LocalizeResult(result)
 end
 
 local inputAliases = {
@@ -87,12 +124,12 @@ local function ResolveInput(channelKey, text)
     if not resolved then
         local commandLine = text:sub(2):gsub('^%s+', ''):gsub('%s+$', '')
         if commandLine == '' then
-            return ChatResults.Err('invalid_command', 'Enter a command after the slash.')
+            return ChatResults.Err('invalid_command', ChatLocale.T('error_enter_a_command_after_the_slash'))
         end
         return ChatResults.Ok({ command=commandLine })
     end
     if body == '' then
-        return ChatResults.Err('invalid_message', 'Enter a message after the chat command.')
+        return ChatResults.Err('invalid_message', ChatLocale.T('error_enter_a_message_after_the_chat_command'))
     end
     return ChatResults.Ok({ channelKey=resolved, text=body })
 end
@@ -104,6 +141,15 @@ RefreshDirectory = function()
         or type(result.value.channels) ~= 'table' then return result end
     state.channels, state.suggestions, state.aliases = result.value.channels,
         type(result.value.suggestions) == 'table' and result.value.suggestions or {}, {}
+    for _, suggestion in ipairs(state.suggestions) do
+        if type(suggestion.descriptionKey) == 'string' then
+            local ok, text = pcall(Feather.Locale.translate, 0, suggestion.descriptionKey)
+            if ok and type(text) == 'string' and text ~= ''
+                and not text:match('^Translation %[') and not text:match('^Locale %[') then
+                suggestion.description = text
+            end
+        end
+    end
     for _, channel in ipairs(state.channels) do
         local input = type(channel) == 'table' and channel.input or nil
         for _, alias in ipairs(type(input) == 'table' and input.aliases or {}) do
@@ -121,13 +167,13 @@ end)
 
 RegisterNUICallback('chat:submit', function(payload, callback)
     local function Reject(result)
-        callback(result)
+        callback(ChatLocale.LocalizeResult(result))
         CloseChat()
-        Ui({ type='chat:error', message=result.message or 'Message was not accepted.' })
+        Ui({ type='chat:error', message=result.message or ChatLocale.T('error_message_was_not_accepted') })
     end
     if type(payload) ~= 'table' or type(payload.channelKey) ~= 'string'
         or type(payload.text) ~= 'string' then
-        Reject(ChatResults.Err('invalid_input', 'Chat submission is invalid.'))
+        Reject(ChatResults.Err('invalid_input', ChatLocale.T('error_chat_submission_is_invalid')))
         return
     end
     local resolved = ResolveInput(payload.channelKey, payload.text)
@@ -146,13 +192,13 @@ RegisterNUICallback('chat:submit', function(payload, callback)
         Reject(result)
         return
     end
-    callback(result)
+    callback(ChatLocale.LocalizeResult(result))
     if Config.Input.closeOnSubmit then CloseChat() end
 end)
 
 RegisterNUICallback('chat:ignore-toggle', function(payload, callback)
     if type(payload) ~= 'table' or type(payload.messageId) ~= 'string' then
-        callback(ChatResults.Err('invalid_input', 'Ignore request is invalid.'))
+        callback(ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_request_is_invalid')))
         return
     end
     local result, transportError = exports['feather-core']:CallRPCAsync(
@@ -160,9 +206,9 @@ RegisterNUICallback('chat:ignore-toggle', function(payload, callback)
         Config.Limits.callbackTimeoutMs)
     if type(result) ~= 'table' then
         result = ChatResults.Err(transportError and transportError.code or 'transport_failed',
-            transportError and transportError.message or 'Ignore preference could not be saved.')
+            ChatLocale.T('error_ignore_preference_could_not_be_saved'))
     end
-    callback(result)
+    callback(ChatLocale.LocalizeResult(result))
 end)
 
 local function IgnoreRPC(route, payload, callback)
@@ -170,9 +216,9 @@ local function IgnoreRPC(route, payload, callback)
         route, payload, nil, Config.Limits.callbackTimeoutMs)
     if type(result) ~= 'table' then
         result = ChatResults.Err(transportError and transportError.code or 'transport_failed',
-            transportError and transportError.message or 'Ignore preference request failed.')
+            ChatLocale.T('error_ignore_preference_request_failed'))
     end
-    callback(result)
+    callback(ChatLocale.LocalizeResult(result))
 end
 
 RegisterNUICallback('chat:ignore-list', function(_, callback)
@@ -181,7 +227,7 @@ end)
 
 RegisterNUICallback('chat:ignore-remove', function(payload, callback)
     if type(payload) ~= 'table' or type(payload.ignoreId) ~= 'string' then
-        callback(ChatResults.Err('invalid_input', 'Ignore removal request is invalid.'))
+        callback(ChatResults.Err('invalid_input', ChatLocale.T('error_ignore_removal_request_is_invalid')))
         return
     end
     IgnoreRPC('chat.ignore.remove.v1', { ignoreId=payload.ignoreId }, callback)
@@ -211,7 +257,7 @@ for command, channelKey in pairs(inputAliases) do
         if text == '' then return OpenChat() end
         local result = Submit(channelKey, text)
         if not result.ok then
-            Ui({ type='chat:error', message=result.message or 'Message was not accepted.' })
+            Ui({ type='chat:error', message=result.message or ChatLocale.T('error_message_was_not_accepted') })
         end
     end, false)
 end

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { nui } from './api'
+import { t, setLocale } from './locale'
+import { ignoreAvailability } from './toolbarState.mjs'
+import StaffCases from './StaffCases.vue'
 
 type Layout = {
   anchor: string
@@ -44,6 +47,7 @@ type Channel = { channelKey: string; label: string }
 type Suggestion = { key: string; trigger: string; description: string; channelKey?: string }
 
 const open = ref(false)
+const showStaffCases = ref(false)
 const visible = ref(true)
 const feedVisible = ref(false)
 const input = ref('')
@@ -60,9 +64,9 @@ const showIgnores = ref(false)
 const ignores = ref<IgnoreEntry[]>([])
 const ignoreEnabled = ref(false)
 const channels = ref<Channel[]>([
-  { channelKey: 'local.say', label: 'Say' },
-  { channelKey: 'local.whisper', label: 'Whisper' },
-  { channelKey: 'local.shout', label: 'Shout' },
+  { channelKey: 'local.say', label: t('ui_say') },
+  { channelKey: 'local.whisper', label: t('ui_whisper') },
+  { channelKey: 'local.shout', label: t('ui_shout') },
   { channelKey: 'roleplay.me', label: '/me' },
   { channelKey: 'roleplay.do', label: '/do' },
 ])
@@ -108,15 +112,21 @@ const motionReduced = computed(() => state.layout.reducedMotion
 const matchingSuggestions = computed(() => {
   if (!input.value.startsWith('/')) return []
   const token = input.value.split(/\s/, 1)[0].toLowerCase()
-  return suggestions.value.filter((item) => item.trigger.startsWith(token))
+  return suggestions.value.filter((item) => item.trigger.toLowerCase().startsWith(token))
 })
 const filteredMessages = computed(() => selectedFilter.value === 'all'
   ? messages.value
   : messages.value.filter((message) => message.channelKey === selectedFilter.value))
 const selectedFilterLabel = computed(() => channels.value
-  .find((channel) => channel.channelKey === selectedFilter.value)?.label)
+  .find((channel) => channel.channelKey === selectedFilter.value))
+function channelLabel(channel?: Channel) {
+  if (!channel) return ''
+  const builtin: Record<string, string> = { 'local.say': 'ui_say', 'local.whisper': 'ui_whisper', 'local.shout': 'ui_shout' }
+  return builtin[channel.channelKey] ? t(builtin[channel.channelKey]) : channel.label
+}
 
 function selectFilter(channelKey: string) {
+  showStaffCases.value = false
   showIgnores.value = false
   selectedFilter.value = channelKey
   selectedChannel.value = channelKey === 'all' ? 'local.say' : channelKey
@@ -125,9 +135,20 @@ function selectFilter(channelKey: string) {
 }
 
 function messageChannelLabel(message: ChatMessage) {
+  if (['local.say', 'local.whisper', 'local.shout'].includes(message.channelKey)) {
+    return channelLabel({ channelKey: message.channelKey, label: message.channelLabel || '' })
+  }
   return message.channelLabel
     || channels.value.find((channel) => channel.channelKey === message.channelKey)?.label
     || message.channelKey
+}
+
+function suggestionDescription(suggestion: Suggestion) {
+  if (suggestion.key.startsWith('builtin.') && suggestion.channelKey) {
+    return t('ui_send_to_channel', { channel: channelLabel(channels.value.find(
+      (channel) => channel.channelKey === suggestion.channelKey)) })
+  }
+  return suggestion.description
 }
 
 function messageStyle(message: ChatMessage) {
@@ -195,7 +216,7 @@ async function toggleIgnore() {
   const result = await nui<IgnoreResult>('chat:ignore-toggle', { messageId: selected.messageId })
   changingIgnore.value = false
   if (!result?.ok) {
-    error.value = result?.message || 'Ignore preference could not be saved.'
+    error.value = result?.message || t('ui_ignore_preference_could_not_be_saved')
     contextMenu.value = null
     return
   }
@@ -203,7 +224,7 @@ async function toggleIgnore() {
   if (result.value?.ignored) next.add(selected.author.characterId)
   else next.delete(selected.author.characterId)
   ignoredAuthors.value = next
-  error.value = `${result.value?.displayName || selected.author.displayName} ${result.value?.ignored ? 'ignored' : 'unignored'}.`
+  error.value = t(result.value?.ignored ? 'ui_name_ignored' : 'ui_name_unignored', { name: result.value?.displayName || selected.author.displayName })
   contextMenu.value = null
 }
 
@@ -211,7 +232,7 @@ async function openIgnores() {
   contextMenu.value = null
   const result = await nui<{ ok: boolean; message?: string; value?: { ignores?: IgnoreEntry[] } }>('chat:ignore-list')
   if (!result?.ok) {
-    error.value = result?.message || 'Ignored players could not be loaded.'
+    error.value = result?.message || t('ui_ignored_players_could_not_be_loaded')
     return
   }
   ignores.value = Array.isArray(result.value?.ignores) ? result.value.ignores : []
@@ -221,11 +242,11 @@ async function openIgnores() {
 async function removeIgnore(entry: IgnoreEntry) {
   const result = await nui<SubmitResult>('chat:ignore-remove', { ignoreId: entry.ignoreId })
   if (!result?.ok) {
-    error.value = result?.message || 'Ignore preference could not be removed.'
+    error.value = result?.message || t('ui_ignore_preference_could_not_be_removed')
     return
   }
   ignores.value = ignores.value.filter((item) => item.ignoreId !== entry.ignoreId)
-  error.value = `${entry.displayName} unignored.`
+  error.value = t('ui_name_unignored', { name: entry.displayName })
 }
 
 function scheduleFeedFade() {
@@ -245,6 +266,10 @@ async function chooseSuggestion(suggestion: Suggestion) {
 }
 
 function receive(event: MessageEvent) {
+  if (event.data?.type === 'chat:case:reset') {
+    showStaffCases.value = false
+    return
+  }
   const message = event.data
   if (!message || typeof message.type !== 'string') return
   if (message.type === 'chat:open') {
@@ -262,9 +287,13 @@ function receive(event: MessageEvent) {
     window.clearTimeout(errorTimer)
   } else if (message.type === 'chat:visibility') {
     visible.value = message.visible === true
+  } else if (message.type === 'chat:locale') {
+    setLocale(message.locale)
+    ignoreEnabled.value = ignoreAvailability(ignoreEnabled.value, message.ignoreEnabled)
   } else if (message.type === 'chat:bootstrap' && message.config) {
+    setLocale(message.config.locale)
     applyPresentation(message.config)
-    ignoreEnabled.value = message.config.ignoreEnabled === true
+    ignoreEnabled.value = ignoreAvailability(ignoreEnabled.value, message.config.ignoreEnabled)
     if (Array.isArray(message.messages)) {
       messages.value = message.messages
       void scrollFeedToBottom()
@@ -302,7 +331,7 @@ function receive(event: MessageEvent) {
     }
     scheduleFeedFade()
   } else if (message.type === 'chat:error') {
-    error.value = typeof message.message === 'string' ? message.message : 'Message was not accepted.'
+    error.value = typeof message.message === 'string' ? message.message : t('ui_message_was_not_accepted')
     window.clearTimeout(errorTimer)
     errorTimer = window.setTimeout(() => {
       error.value = ''
@@ -331,7 +360,7 @@ async function submit() {
   })
   submitting.value = false
   if (!result?.ok) {
-    error.value = result?.message || 'Message was not accepted.'
+    error.value = result?.message || t('ui_message_was_not_accepted')
     return
   }
   input.value = ''
@@ -379,56 +408,64 @@ onBeforeUnmount(() => {
     :data-theme="state.theme"
     :style="shellStyle"
   >
-    <section class="chat-panel" aria-label="Chat messages" aria-live="polite">
-      <nav class="channel-tabs" aria-label="Chat channels">
-        <button
-          class="channel"
-          :class="{ active: !showIgnores && selectedFilter === 'all' }"
-          type="button"
-          @click="selectFilter('all')"
-        >
-          All
-        </button>
-        <button
-          v-for="channel in channels"
-          :key="channel.channelKey"
-          class="channel"
-          :class="{ active: !showIgnores && selectedFilter === channel.channelKey }"
-          type="button"
-          @click="selectFilter(channel.channelKey)"
-        >
-          {{ channel.label }}
-        </button>
-        <button
-          v-if="ignoreEnabled"
-          class="channel ignored-players-button"
-          :class="{ active: showIgnores }"
-          type="button"
-          :aria-pressed="showIgnores"
-          @click="showIgnores ? showIgnores = false : openIgnores()"
-        >
-          Ignored
-        </button>
+    <section class="chat-panel" :aria-label="t('ui_chat_messages')" aria-live="polite">
+      <nav class="channel-tabs" :aria-label="t('ui_chat_channels')">
+        <div class="channel-filters">
+          <button
+            class="channel"
+            :class="{ active: !showStaffCases && !showIgnores && selectedFilter === 'all' }"
+            type="button"
+            @click="selectFilter('all')"
+          >
+            {{ t('ui_all') }}
+          </button>
+          <button
+            v-for="channel in channels"
+            :key="channel.channelKey"
+            class="channel"
+            :class="{ active: !showStaffCases && !showIgnores && selectedFilter === channel.channelKey }"
+            type="button"
+            @click="selectFilter(channel.channelKey)"
+          >
+            {{ channelLabel(channel) }}
+          </button>
+        </div>
+        <div class="channel-tools">
+          <button
+            v-if="ignoreEnabled"
+            class="channel ignored-players-button"
+            :class="{ active: showIgnores }"
+            type="button"
+            :aria-pressed="showIgnores"
+            @click="showStaffCases = false; showIgnores ? showIgnores = false : openIgnores()"
+          >
+            {{ t('ui_ignored') }}
+          </button>
+          <button v-if="open" class="channel" :class="{ active: showStaffCases }" type="button" :aria-pressed="showStaffCases" :title="t('ui_private_staff_conversations')" @click="showStaffCases = !showStaffCases; showIgnores = false">
+            {{ t('ui_staff') }}
+          </button>
+        </div>
       </nav>
-      <div v-if="showIgnores" class="ignored-players" aria-label="Ignored players">
-        <strong>Ignored players</strong>
-        <span v-if="ignores.length === 0" class="ignored-empty">No ignored players.</span>
+      <StaffCases v-if="open && showStaffCases" />
+      <div v-else-if="showIgnores" class="ignored-players" :aria-label="t('ui_ignored_players')">
+        <strong>{{ t('ui_ignored_players') }}</strong>
+        <span v-if="ignores.length === 0" class="ignored-empty">{{ t('ui_no_ignored_players') }}</span>
         <div v-for="entry in ignores" v-else :key="entry.ignoreId" class="ignored-entry">
           <span>{{ entry.displayName }}</span>
           <button type="button" @click="removeIgnore(entry)">
-            Unignore
+            {{ t('ui_unignore') }}
           </button>
         </div>
       </div>
       <div v-else-if="filteredMessages.length === 0" class="empty-state">
-        <strong>Feather Chat</strong>
-        <span>{{ selectedFilter === 'all' ? 'No messages yet.' : `No ${selectedFilterLabel || 'channel'} messages yet.` }}</span>
+        <strong>{{ t('ui_feather_chat') }}</strong>
+        <span>{{ selectedFilter === 'all' ? t('ui_no_messages_yet') : t('ui_no_channel_messages_yet', { channel: channelLabel(selectedFilterLabel) }) }}</span>
       </div>
       <ol
         v-else-if="!showIgnores"
         ref="messageList"
         class="message-list"
-        aria-label="Recent messages"
+        :aria-label="t('ui_recent_messages')"
         @scroll.passive="handleFeedScroll"
       >
         <li
@@ -462,7 +499,7 @@ onBeforeUnmount(() => {
         @click.stop
       >
         <button type="button" role="menuitem" :disabled="changingIgnore" @click="toggleIgnore">
-          {{ ignoredAuthors.has(contextMenu.message.author.characterId) ? 'Unignore' : 'Ignore' }}
+          {{ ignoredAuthors.has(contextMenu.message.author.characterId) ? t('ui_unignore') : t('ui_ignore') }}
           {{ contextMenu.message.author.displayName }}
         </button>
       </div>
@@ -470,38 +507,38 @@ onBeforeUnmount(() => {
         v-if="unreadMessages > 0"
         type="button"
         class="new-message-indicator"
-        :aria-label="`${unreadMessages} new ${unreadMessages === 1 ? 'message' : 'messages'}. Scroll to latest.`"
+        :aria-label="t('ui_count_new_messages_scroll_to_latest', { count: unreadMessages })"
         @click="scrollFeedToBottom"
       >
-        {{ unreadMessages === 1 ? 'New message' : `${unreadMessages} new messages` }} ↓
+        {{ unreadMessages === 1 ? t('ui_new_message') : t('ui_count_new_messages', { count: unreadMessages }) }} ↓
       </button>
       <div v-if="error" class="error" role="alert">
         {{ error }}
       </div>
     </section>
 
-    <section v-if="open" class="composer" aria-label="Chat input">
+    <section v-if="open && !showStaffCases" class="composer" :aria-label="t('ui_chat_input')">
       <span class="channel-label">
-        {{ channels.find((channel) => channel.channelKey === selectedChannel)?.label }}
+        {{ channelLabel(channels.find((channel) => channel.channelKey === selectedChannel)) }}
       </span>
       <textarea
         ref="composer"
         v-model="input"
         rows="1"
         maxlength="500"
-        aria-label="Message"
-        placeholder="Type a local message"
+        :aria-label="t('ui_message')"
+        :placeholder="t('ui_type_a_local_message')"
         :disabled="submitting"
         @keydown="composerKeydown"
       />
-      <button type="button" class="close" aria-label="Close chat" @click="close">
-        Esc
+      <button type="button" class="close" :aria-label="t('ui_close_chat')" @click="close">
+        {{ t('ui_esc') }}
       </button>
-      <ul v-if="matchingSuggestions.length" class="suggestions" aria-label="Chat suggestions">
+      <ul v-if="matchingSuggestions.length" class="suggestions" :aria-label="t('ui_chat_suggestions')">
         <li v-for="suggestion in matchingSuggestions" :key="suggestion.key">
           <button type="button" @click="chooseSuggestion(suggestion)">
             <strong>{{ suggestion.trigger }}</strong>
-            <span>{{ suggestion.description }}</span>
+            <span>{{ suggestionDescription(suggestion) }}</span>
           </button>
         </li>
       </ul>

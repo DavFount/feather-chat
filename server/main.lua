@@ -1,4 +1,13 @@
 local resourceName = GetCurrentResourceName()
+RegisterCommand('ChatLocaleSmokeTest', function(source)
+    if source ~= 0 then return end
+    local passed, tests = 0, ChatLocale.Smoke()
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatLocaleSmokeTest] %-36s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatLocaleSmokeTest] done %s/%s passed (no database writes)'):format(passed, #tests))
+end, true)
 local lifecycle = { state='starting', reason='waiting_for_core', readyAt=nil }
 
 local function Features()
@@ -42,7 +51,7 @@ local function AwaitReady(timeoutMs)
         if timeout == 0 or GetGameTimer() >= deadline then break end
         Wait(25)
     until false
-    return ChatResults.Err('not_ready', 'Feather Chat is not ready.', {
+    return ChatResults.Err('not_ready', ChatLocale.T('error_feather_chat_is_not_ready'), {
         state=lifecycle.state, reason=lifecycle.reason
     })
 end
@@ -60,7 +69,7 @@ local function Boot()
         local validated = ChatContract.ValidateConfig(Config)
         if not validated.ok then
             lifecycle = { state='unavailable', reason=validated.code, readyAt=nil }
-            print(('[feather-chat] startup rejected code=%s message=%s'):format(
+            print(ChatLocale.Format('operator_startup_rejected_code_value_message_value',
                 tostring(validated.code), tostring(validated.message)))
             booting = false
             return
@@ -80,7 +89,7 @@ local function Boot()
         local themeRoutes = themeStart.ok and ChatThemes.RegisterRoutes() or themeStart
         if type(themeRoutes) ~= 'table' or themeRoutes.ok ~= true then
             lifecycle = { state='unavailable', reason='theme_registration_failed', readyAt=nil }
-            print(('[feather-chat] theme registration failed code=%s'):format(
+            print(ChatLocale.Format('operator_theme_registration_failed_code_value',
                 tostring(type(themeRoutes) == 'table' and themeRoutes.code or 'invalid_result')))
             booting = false
             return
@@ -90,7 +99,7 @@ local function Boot()
         local channelRoutes = channelStart.ok and ChatChannels.RegisterRoutes() or channelStart
         if type(channelRoutes) ~= 'table' or channelRoutes.ok ~= true then
             lifecycle = { state='unavailable', reason='channel_registration_failed', readyAt=nil }
-            print(('[feather-chat] channel registration failed code=%s'):format(
+            print(ChatLocale.Format('operator_channel_registration_failed_code_value',
                 tostring(type(channelRoutes) == 'table' and channelRoutes.code or 'invalid_result')))
             booting = false
             return
@@ -98,7 +107,7 @@ local function Boot()
         local moderationStart = ChatModeration.Start()
         if type(moderationStart) ~= 'table' or moderationStart.ok ~= true then
             lifecycle = { state='unavailable', reason='moderation_persistence_failed', readyAt=nil }
-            print(('[feather-chat] moderation startup failed code=%s'):format(
+            print(ChatLocale.Format('operator_moderation_startup_failed_code_value',
                 tostring(type(moderationStart) == 'table' and moderationStart.code or 'invalid_result')))
             booting = false
             return
@@ -106,7 +115,7 @@ local function Boot()
         local moderationRoutes = ChatModeration.RegisterRoutes()
         if type(moderationRoutes) ~= 'table' or moderationRoutes.ok ~= true then
             lifecycle = { state='unavailable', reason='moderation_registration_failed', readyAt=nil }
-            print(('[feather-chat] moderation route registration failed code=%s'):format(
+            print(ChatLocale.Format('operator_moderation_route_registration_failed_code_value',
                 tostring(type(moderationRoutes) == 'table' and moderationRoutes.code or 'invalid_result')))
             booting = false
             return
@@ -114,7 +123,7 @@ local function Boot()
         local messaging = ChatMessaging.Start()
         if type(messaging) ~= 'table' or messaging.ok ~= true then
             lifecycle = { state='unavailable', reason='messaging_registration_failed', readyAt=nil }
-            print(('[feather-chat] messaging registration failed code=%s'):format(
+            print(ChatLocale.Format('operator_messaging_registration_failed_code_value',
                 tostring(type(messaging) == 'table' and messaging.code or 'invalid_result')))
             booting = false
             return
@@ -127,6 +136,16 @@ local function Boot()
 end
 
 Boot()
+
+RegisterCommand('ChatSuggestionContractSmokeTest', function(source)
+    if source ~= 0 then return end
+    local passed, tests = 0, ChatChannels.SuggestionSmoke()
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[ChatSuggestionContractSmokeTest] %-38s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[ChatSuggestionContractSmokeTest] done %d/%d passed (temporary registry entries; no database writes)'):format(passed, #tests))
+end, true)
 
 AddEventHandler('onResourceStart', function(startedResource)
     if startedResource == 'feather-core' or startedResource == 'feather-mysql' then

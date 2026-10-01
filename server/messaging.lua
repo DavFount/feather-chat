@@ -43,8 +43,8 @@ local function NormalizeText(text)
         end
     end)
     if not valid then
-        return nil, failure == 'unsafe_character' and 'Message contains unsupported characters.'
-            or 'Message is not valid UTF-8.'
+        return nil, failure == 'unsafe_character' and ChatLocale.T('error_message_contains_unsupported_characters')
+            or ChatLocale.T('error_message_is_not_valid_utf_8')
     end
     return text
 end
@@ -75,23 +75,39 @@ local function RateAllowed(source, channelKey, text)
         Config.RateLimit.maxRepeatedMessages)
 end
 
+-- Official case traffic stays out of RP routing and ignore filters. Admin owns
+-- participant authorization/persistence; Chat owns plain-text validation/rates.
+exports('PrepareStaffCaseText', function(source, conversationId, text)
+    if GetInvokingResource() ~= 'feather-admin' then
+        return { ok = false, code = 'forbidden' }
+    end
+    if type(source) ~= 'number' or source < 1 or type(conversationId) ~= 'string'
+        or #conversationId ~= 36 or type(text) ~= 'string' or #text > Config.Limits.maxMessageBytes then
+        return { ok = false, code = 'invalid_input' }
+    end
+    local normalized = NormalizeText(text)
+    if not normalized then return { ok = false, code = 'invalid_input' } end
+    if not RateAllowed(source, 'staff.case', normalized) then return { ok = false, code = 'rate_limited' } end
+    return { ok = true, text = normalized }
+end)
+
 local function Profile(characterId)
     local provider = exports['feather-core']:GetProvider('character-profile', nil, 1)
     local implementation = type(provider) == 'table' and provider.ok == true
         and type(provider.value) == 'table' and provider.value.implementation or nil
     if type(implementation) ~= 'table' or not Callable(implementation.GetProfile) then
-        return ChatResults.Err('identity_unavailable', 'Character identity is unavailable.')
+        return ChatResults.Err('identity_unavailable', ChatLocale.T('error_character_identity_is_unavailable'))
     end
     local called, result = pcall(implementation.GetProfile, characterId)
     if not called or type(result) ~= 'table' or result.ok ~= true
         or type(result.value) ~= 'table' then
-        return ChatResults.Err('identity_unavailable', 'Character identity is unavailable.')
+        return ChatResults.Err('identity_unavailable', ChatLocale.T('error_character_identity_is_unavailable'))
     end
     local first = type(result.value.firstName) == 'string' and result.value.firstName or ''
     local last = type(result.value.lastName) == 'string' and result.value.lastName or ''
     local displayName = (first .. ' ' .. last):gsub('^%s+', ''):gsub('%s+$', '')
     if displayName == '' or #displayName > 96 then
-        return ChatResults.Err('identity_unavailable', 'Character display name is unavailable.')
+        return ChatResults.Err('identity_unavailable', ChatLocale.T('error_character_display_name_is_unavailable'))
     end
     return ChatResults.Ok({ characterId=characterId, displayName=displayName })
 end
@@ -107,7 +123,7 @@ end
 local function Recipients(source, radius)
     local origin, bucket = AuthoritativePosition(source)
     if not origin then
-        return nil, ChatResults.Err('position_unavailable', 'Authoritative player position is unavailable.')
+        return nil, ChatResults.Err('position_unavailable', ChatLocale.T('error_authoritative_player_position_is_unavailable'))
     end
     local selected, radiusSquared = {}, radius * radius
     for _, rawTarget in ipairs(GetPlayers()) do
@@ -200,7 +216,7 @@ local function DefaultDependencies()
             if not audience.ok or type(audience.value) ~= 'table'
                 or type(audience.value.sources) ~= 'table' then
                 return nil, ChatResults.Err(audience.code or 'provider_unavailable',
-                    audience.message or 'Channel audience is unavailable.')
+                    audience.message or ChatLocale.T('error_channel_audience_is_unavailable'))
             end
             local recipients, allowed = {}, {}
             for _, session in ipairs(connected) do allowed[session.source] = true end
@@ -222,7 +238,7 @@ end
 
 local function ProcessSubmission(payload, source, context, dependencies)
     if not dependencies.isSessionCurrent(source, context.sessionId, context.characterId) then
-        return ChatResults.Err('session_stale', 'Character session changed.')
+        return ChatResults.Err('session_stale', ChatLocale.T('error_character_session_changed'))
     end
     local text, textError = dependencies.normalizeText(payload.text)
     if not text then return ChatResults.Err('invalid_message', textError) end
@@ -230,35 +246,35 @@ local function ProcessSubmission(payload, source, context, dependencies)
     if not identity.ok then return identity end
     local channel = dependencies.getChannel(payload.channelKey)
     if not channel or channel.visibility == 'system' then
-        return ChatResults.Err('channel_unavailable', 'That channel is unavailable.')
+        return ChatResults.Err('channel_unavailable', ChatLocale.T('error_that_channel_is_unavailable'))
     end
     if #text > channel.input.maximumLength then
-        return ChatResults.Err('invalid_message', 'Message is too long for that channel.')
+        return ChatResults.Err('invalid_message', ChatLocale.T('error_message_is_too_long_for_that_channel'))
     end
     local actor = { source=source, accountId=context.accountId,
         characterId=context.characterId, sessionId=context.sessionId }
     local access = dependencies.canSend(channel, actor)
     if not access.ok or type(access.value) ~= 'table'
         or (access.value.allowed ~= true and access.value.canSend ~= true) then
-        return ChatResults.Err(access.code or 'forbidden', access.message or 'You cannot send to that channel.')
+        return ChatResults.Err(access.code or 'forbidden', access.message or ChatLocale.T('error_you_cannot_send_to_that_channel'))
     end
     local moderation = dependencies.moderationCanSend(actor, channel)
     if not moderation.ok then return moderation end
     if not dependencies.rateAllowed(source, channel.channelKey, text) then
-        return ChatResults.Err('rate_limited', 'You are sending messages too quickly.')
+        return ChatResults.Err('rate_limited', ChatLocale.T('error_you_are_sending_messages_too_quickly'))
     end
     local moderated = dependencies.moderateMessage(actor, channel, text)
     if not moderated.ok then return moderated end
     text, textError = dependencies.normalizeText(moderated.value.text)
     if not text then return ChatResults.Err('invalid_content', textError) end
     if #text > channel.input.maximumLength then
-        return ChatResults.Err('invalid_content', 'Moderated message is too long.')
+        return ChatResults.Err('invalid_content', ChatLocale.T('error_moderated_message_is_too_long'))
     end
     local recipients, routingError = dependencies.recipients(channel, actor, source)
     if not recipients then return routingError end
     recipients = dependencies.filterRecipients(actor, recipients, channel)
     if not dependencies.isSessionCurrent(source, context.sessionId, context.characterId) then
-        return ChatResults.Err('session_stale', 'Character session changed.')
+        return ChatResults.Err('session_stale', ChatLocale.T('error_character_session_changed'))
     end
 
     sequence = sequence + 1
@@ -287,8 +303,8 @@ local function Submit(payload, source, context, testDependencies)
     end
     local called, result = pcall(ProcessSubmission, payload, source, context, dependencies)
     if not called then
-        print(('[feather-chat] submission failed unexpectedly: %s'):format(tostring(result)))
-        result = ChatResults.Err('internal_error', 'Chat submission failed.')
+        print(ChatLocale.Format('operator_submission_failed_unexpectedly_value', tostring(result)))
+        result = ChatResults.Err('internal_error', ChatLocale.T('error_chat_submission_failed'))
     end
     return Complete(source, entry, result)
 end

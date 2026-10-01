@@ -76,11 +76,11 @@ end
 function ChatModeration.Start()
     if ready then return ChatResults.Ok(true) end
     local called, failure = pcall(function()
-        if not DB.awaitReady(30000) then error('database readiness timed out', 0) end
+        if not DB.awaitReady(30000) then error(ChatLocale.T('error_database_readiness_timed_out'), 0) end
         Migrate()
     end)
     if not called then
-        return ChatResults.Err('persistence_unavailable', 'Chat moderation persistence is unavailable.',
+        return ChatResults.Err('persistence_unavailable', ChatLocale.T('error_chat_moderation_persistence_is_unavailable'),
             { reason=tostring(failure) })
     end
     ready = true
@@ -98,7 +98,7 @@ end
 function ChatModeration.CanSend(actor, channel)
     if not Config.Moderation.mutes.enabled then return ChatResults.Ok({ allowed=true }) end
     local row = ActiveMute(DB, actor, channel)
-    if row then return ChatResults.Err('muted', 'You cannot send messages in this chat context.') end
+    if row then return ChatResults.Err('muted', ChatLocale.T('error_you_cannot_send_messages_in_this_chat_context')) end
     return ChatResults.Ok({ allowed=true })
 end
 
@@ -106,11 +106,11 @@ function ChatModeration.RegisterProvider(name, implementation, options)
     if type(name) ~= 'string' or #name < 3 or #name > 64
         or name:match('^[a-z][a-z0-9_.%-]+$') == nil
         or type(implementation) ~= 'table' or not Callable(implementation.Evaluate) then
-        return ChatResults.Err('invalid_input', 'Moderation provider registration is invalid.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_moderation_provider_registration_is_invalid'))
     end
-    if providers[name] then return ChatResults.Err('already_registered', 'Moderation provider is already registered.') end
+    if providers[name] then return ChatResults.Err('already_registered', ChatLocale.T('error_moderation_provider_is_already_registered')) end
     if #providerOrder >= Config.Moderation.providers.maximumRegistered then
-        return ChatResults.Err('limit_reached', 'Moderation provider limit reached.')
+        return ChatResults.Err('limit_reached', ChatLocale.T('error_moderation_provider_limit_reached'))
     end
     options = type(options) == 'table' and options or {}
     providers[name] = { owner=Owner(), implementation=implementation, required=options.required == true }
@@ -121,8 +121,8 @@ end
 
 function ChatModeration.UnregisterProvider(name)
     local provider = providers[name]
-    if not provider then return ChatResults.Err('not_found', 'Moderation provider was not found.') end
-    if provider.owner ~= Owner() then return ChatResults.Err('forbidden', 'Moderation provider belongs to another resource.') end
+    if not provider then return ChatResults.Err('not_found', ChatLocale.T('error_moderation_provider_was_not_found')) end
+    if provider.owner ~= Owner() then return ChatResults.Err('forbidden', ChatLocale.T('error_moderation_provider_belongs_to_another_resource')) end
     providers[name] = nil
     for index, key in ipairs(providerOrder) do
         if key == name then table.remove(providerOrder, index) break end
@@ -136,7 +136,7 @@ local function EvaluateProviders(actor, channel, text, forceEnabled)
     end
     local globallyRequired = not forceEnabled and Config.Moderation.providers.required or false
     if #providerOrder == 0 and globallyRequired then
-        return ChatResults.Err('provider_unavailable', 'Required chat moderation is unavailable.')
+        return ChatResults.Err('provider_unavailable', ChatLocale.T('error_required_chat_moderation_is_unavailable'))
     end
     local normalized = text
     for _, name in ipairs(providerOrder) do
@@ -148,17 +148,17 @@ local function EvaluateProviders(actor, channel, text, forceEnabled)
         local valid = called and type(result) == 'table' and result.ok == true
             and type(result.value) == 'table' and type(result.value.allowed) == 'boolean'
         if not valid then
-            print(('[feather-chat] moderation provider failed name=%s required=%s'):format(
+            print(ChatLocale.Format('operator_moderation_provider_failed_name_value_required_value',
                 name, tostring(provider.required or Config.Moderation.providers.required)))
             if provider.required or globallyRequired then
-                return ChatResults.Err('provider_unavailable', 'Required chat moderation is unavailable.')
+                return ChatResults.Err('provider_unavailable', ChatLocale.T('error_required_chat_moderation_is_unavailable'))
             end
         elseif result.value.allowed ~= true then
-            return ChatResults.Err('invalid_content', 'That message was rejected by moderation.', {
+            return ChatResults.Err('invalid_content', ChatLocale.T('error_that_message_was_rejected_by_moderation'), {
                 provider=name, reasonCode=result.value.reasonCode })
         elseif result.value.text ~= nil then
             if type(result.value.text) ~= 'string' then
-                return ChatResults.Err('provider_unavailable', 'Chat moderation returned an invalid replacement.')
+                return ChatResults.Err('provider_unavailable', ChatLocale.T('error_chat_moderation_returned_an_invalid_replacement'))
             end
             normalized = result.value.text
         end
@@ -222,20 +222,20 @@ end
 
 function ChatModeration.ToggleIgnore(payload, source, context)
     if not Config.Moderation.playerControls.ignoreEnabled then
-        return ChatResults.Err('disabled', 'Player ignores are disabled.')
+        return ChatResults.Err('disabled', ChatLocale.T('error_player_ignores_are_disabled'))
     end
     local cache = deliveries[source]
     local receipt = cache and cache.values[payload.messageId] or nil
     if not receipt or receipt.recipientSessionId ~= context.sessionId then
-        return ChatResults.Err('message_unavailable', 'That message is no longer available for this action.')
+        return ChatResults.Err('message_unavailable', ChatLocale.T('error_that_message_is_no_longer_available_for_this_action'))
     end
     if OfficialKind(receipt.kind) then
-        return ChatResults.Err('not_ignorable', 'Official staff and system messages cannot be ignored.')
+        return ChatResults.Err('not_ignorable', ChatLocale.T('error_official_staff_and_system_messages_cannot_be_ignored'))
     end
     local subjectId = Config.Moderation.playerControls.ignoreSubjectScope == 'account'
         and receipt.accountId or receipt.characterId
     if context.accountId == receipt.accountId then
-        return ChatResults.Err('invalid_target', 'You cannot ignore yourself.')
+        return ChatResults.Err('invalid_target', ChatLocale.T('error_you_cannot_ignore_yourself'))
     end
     local existing = DB.value([[SELECT 1 FROM `feather_chat_ignores` WHERE `owner_account_id`=?
         AND `subject_type`=? AND `subject_id`=? LIMIT 1]], context.accountId,
@@ -244,7 +244,7 @@ function ChatModeration.ToggleIgnore(payload, source, context)
     if ignored then
         local count = tonumber(DB.value('SELECT COUNT(*) FROM `feather_chat_ignores` WHERE `owner_account_id`=?', context.accountId)) or 0
         if count >= Config.Moderation.playerControls.maximumIgnoredSubjects then
-            return ChatResults.Err('limit_reached', 'Ignore limit reached.')
+            return ChatResults.Err('limit_reached', ChatLocale.T('error_ignore_limit_reached'))
         end
         DB.exec([[INSERT INTO `feather_chat_ignores`
             (`owner_account_id`,`subject_type`,`subject_id`,`ignore_id`,`display_name`)
@@ -272,7 +272,7 @@ end
 function ChatModeration.RemoveIgnore(payload, _, context)
     local changed = DB.exec([[DELETE FROM `feather_chat_ignores`
         WHERE `owner_account_id`=? AND `ignore_id`=?]], context.accountId, payload.ignoreId)
-    if tonumber(changed) ~= 1 then return ChatResults.Err('not_found', 'Ignore preference was not found.') end
+    if tonumber(changed) ~= 1 then return ChatResults.Err('not_found', ChatLocale.T('error_ignore_preference_was_not_found')) end
     return ChatResults.Ok(true)
 end
 
@@ -314,20 +314,20 @@ function ChatModeration.IssueMute(request)
         or (request.scopeType == 'channel' and (type(request.scopeKey) ~= 'string'
             or #request.scopeKey < 3 or #request.scopeKey > 96))
         or (request.scopeType ~= 'channel' and request.scopeKey ~= nil) then
-        return ChatResults.Err('invalid_input', 'Mute request is invalid.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_mute_request_is_invalid'))
     end
     local source = math.floor(tonumber(request.source) or 0)
     local allowed, decision = Authorized('chat.mute.issue', source)
-    if not allowed then return ChatResults.Err('forbidden', 'Mute authorization was denied.', { decision=decision and decision.code }) end
+    if not allowed then return ChatResults.Err('forbidden', ChatLocale.T('error_mute_authorization_was_denied'), { decision=decision and decision.code }) end
     local session = exports['feather-core']:GetSessionContext(source)
-    if type(session) ~= 'table' or not session.ok then return ChatResults.Err('unauthenticated', 'Staff session is unavailable.') end
+    if type(session) ~= 'table' or not session.ok then return ChatResults.Err('unauthenticated', ChatLocale.T('error_staff_session_is_unavailable')) end
     local minutes = request.durationMinutes and tonumber(request.durationMinutes) or nil
-    if minutes and minutes % 1 ~= 0 then return ChatResults.Err('invalid_input', 'Mute duration must be whole minutes.') end
+    if minutes and minutes % 1 ~= 0 then return ChatResults.Err('invalid_input', ChatLocale.T('error_mute_duration_must_be_whole_minutes')) end
     if not minutes and not Config.Moderation.mutes.permanentAllowed then
-        return ChatResults.Err('invalid_input', 'Permanent mutes are disabled.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_permanent_mutes_are_disabled'))
     end
     if minutes and (minutes < 1 or minutes > Config.Moderation.mutes.maximumDurationMinutes) then
-        return ChatResults.Err('invalid_input', 'Mute duration is outside the configured limit.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_mute_duration_is_outside_the_configured_limit'))
     end
     local muteId = NewUuid()
     DB.transaction(function(tx)
@@ -349,15 +349,15 @@ end
 
 function ChatModeration.RevokeMute(request)
     if type(request) ~= 'table' or not Uuid(request.muteId) then
-        return ChatResults.Err('invalid_input', 'Mute revocation request is invalid.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_mute_revocation_request_is_invalid'))
     end
     local source = math.floor(tonumber(request.source) or 0)
     local allowed = Authorized('chat.mute.revoke', source)
-    if not allowed then return ChatResults.Err('forbidden', 'Mute authorization was denied.') end
+    if not allowed then return ChatResults.Err('forbidden', ChatLocale.T('error_mute_authorization_was_denied')) end
     local session = exports['feather-core']:GetSessionContext(source)
-    if type(session) ~= 'table' or not session.ok then return ChatResults.Err('unauthenticated', 'Staff session is unavailable.') end
+    if type(session) ~= 'table' or not session.ok then return ChatResults.Err('unauthenticated', ChatLocale.T('error_staff_session_is_unavailable')) end
     local found = DB.one('SELECT `account_id` FROM `feather_chat_mutes` WHERE `mute_id`=? AND `revoked_at` IS NULL', request.muteId:lower())
-    if not found then return ChatResults.Err('not_found', 'Active mute was not found.') end
+    if not found then return ChatResults.Err('not_found', ChatLocale.T('error_active_mute_was_not_found')) end
     local revoked = DB.transaction(function(tx)
         local changed = tx.exec([[UPDATE `feather_chat_mutes` SET `revoked_at`=CURRENT_TIMESTAMP, `revision`=`revision`+1
             WHERE `mute_id`=? AND `revoked_at` IS NULL]], request.muteId:lower())
@@ -370,16 +370,16 @@ function ChatModeration.RevokeMute(request)
         end
         return true
     end)
-    if not revoked then return ChatResults.Err('not_found', 'Active mute was not found.') end
+    if not revoked then return ChatResults.Err('not_found', ChatLocale.T('error_active_mute_was_not_found')) end
     return ChatResults.Ok(true)
 end
 
 function ChatModeration.GetMuteSnapshot(request)
     if type(request) ~= 'table' or not Uuid(request.accountId) then
-        return ChatResults.Err('invalid_input', 'Mute inspection request is invalid.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_mute_inspection_request_is_invalid'))
     end
     local allowed = Authorized('chat.mute.inspect', math.floor(tonumber(request.source) or 0))
-    if not allowed then return ChatResults.Err('forbidden', 'Mute inspection authorization was denied.') end
+    if not allowed then return ChatResults.Err('forbidden', ChatLocale.T('error_mute_inspection_authorization_was_denied')) end
     local rows = DB.query([[SELECT `mute_id` AS `muteId`,`scope_type` AS `scopeType`,
         `scope_key` AS `scopeKey`,`reason`,`issued_by_account_id` AS `issuedByAccountId`,
         DATE_FORMAT(`expires_at`,'%Y-%m-%d %H:%i:%s') AS `expiresAt`,
@@ -392,7 +392,7 @@ end
 
 function ChatModeration.GetDiagnostics(request)
     local allowed = Authorized('chat.diagnostics', math.floor(tonumber(request and request.source) or 0))
-    if not allowed then return ChatResults.Err('forbidden', 'Chat diagnostics authorization was denied.') end
+    if not allowed then return ChatResults.Err('forbidden', ChatLocale.T('error_chat_diagnostics_authorization_was_denied')) end
     local counts = DB.one([[SELECT
         (SELECT COUNT(*) FROM `feather_chat_mutes` WHERE `revoked_at` IS NULL
             AND (`expires_at` IS NULL OR `expires_at`>CURRENT_TIMESTAMP)) AS `activeMutes`,
@@ -515,12 +515,12 @@ end
 local function Boundary(operation, request)
     local caller = Owner()
     if Config.Moderation.trustedCallers[caller] ~= true then
-        return ChatResults.Err('forbidden', 'Calling resource is not trusted for Chat moderation.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_calling_resource_is_not_trusted_for_chat_moderation'))
     end
     local called, result = pcall(operation, request)
     if called and type(result) == 'table' and type(result.ok) == 'boolean' then return result end
-    print(('[feather-chat] moderation operation failed: %s'):format(tostring(result)))
-    return ChatResults.Err('internal_error', 'Chat moderation operation failed.')
+    print(ChatLocale.Format('operator_moderation_operation_failed_value', tostring(result)))
+    return ChatResults.Err('internal_error', ChatLocale.T('error_chat_moderation_operation_failed'))
 end
 
 exports('IssueMute', function(request) return Boundary(ChatModeration.IssueMute, request) end)

@@ -149,8 +149,8 @@ local function ThemeOptions()
     for themeKey in pairs(themes) do
         options[#options + 1] = {
             value=themeKey,
-            label=themeKey == 'feather.default' and 'Feather Default'
-                or themeKey == 'feather.high_contrast' and 'High Contrast' or themeKey
+            label=themeKey == 'feather.default' and ChatLocale.T('ui_feather_default')
+                or themeKey == 'feather.high_contrast' and ChatLocale.T('ui_high_contrast') or themeKey
         }
     end
     table.sort(options, function(left, right) return left.label < right.label end)
@@ -165,8 +165,8 @@ local function RegisterChoice(spec)
         return exports['feather-settings']:RegisterChoice(spec)
     end)
     if not ok or registered ~= true then
-        print(('[feather-chat] Settings registration failed id=%s reason=%s'):format(
-            tostring(spec.id), ok and tostring(reason or 'provider rejected') or tostring(registered)))
+        print(ChatLocale.Format('operator_settings_registration_failed_id_value_reason_value',
+            tostring(spec.id), ok and tostring(reason or ChatLocale.T('error_provider_rejected')) or tostring(registered)))
         return false
     end
     return true
@@ -177,33 +177,33 @@ local function RegisterSettings()
     local state = State()
     local choices = {}
     if Config.Preferences.theme and #ThemeOptions() >= 2 then
-        choices[#choices + 1] = { id='feather-chat:theme', label='Chat Theme',
+        choices[#choices + 1] = { id='feather-chat:theme', label=ChatLocale.T('ui_chat_theme'),
             control='dropdown', options=ThemeOptions(), initialValue=state.theme, preference='theme' }
     end
     if Config.Preferences.density then
-        choices[#choices + 1] = { id='feather-chat:density', label='Chat Density', control='arrows',
-            options={{value='compact',label='Compact'},{value='comfortable',label='Comfortable'}},
+        choices[#choices + 1] = { id='feather-chat:density', label=ChatLocale.T('ui_chat_density'), control='arrows',
+            options={{value='compact',label=ChatLocale.T('ui_compact')},{value='comfortable',label=ChatLocale.T('ui_comfortable')}},
             initialValue=state.layout.density, preference='density' }
     end
     if Config.Preferences.timestamps then
-        choices[#choices + 1] = { id='feather-chat:timestamps', label='Chat Timestamps', control='arrows',
-            options={{value='true',label='Shown'},{value='false',label='Hidden'}},
+        choices[#choices + 1] = { id='feather-chat:timestamps', label=ChatLocale.T('ui_chat_timestamps'), control='arrows',
+            options={{value='true',label=ChatLocale.T('ui_shown')},{value='false',label=ChatLocale.T('ui_hidden')}},
             initialValue=tostring(state.layout.timestamps), preference='timestamps' }
     end
     if Config.Preferences.reducedMotion then
-        choices[#choices + 1] = { id='feather-chat:reduced-motion', label='Chat Motion', control='arrows',
-            options={{value='false',label='Standard'},{value='true',label='Reduced'}},
+        choices[#choices + 1] = { id='feather-chat:reduced-motion', label=ChatLocale.T('ui_chat_motion'), control='arrows',
+            options={{value='false',label=ChatLocale.T('ui_standard')},{value='true',label=ChatLocale.T('ui_reduced')}},
             initialValue=tostring(state.layout.reducedMotion), preference='reducedMotion' }
     end
     if Config.Preferences.fontScale.enabled then
         local bounds = Config.Preferences.fontScale
-        choices[#choices + 1] = { id='feather-chat:font-scale', label='Chat Text Scale', control='slider',
+        choices[#choices + 1] = { id='feather-chat:font-scale', label=ChatLocale.T('ui_chat_text_scale'), control='slider',
             min=bounds.minimum, max=bounds.maximum, step=bounds.step,
             initialValue=state.layout.fontScale, preference='fontScale' }
     end
     if Config.Preferences.idleOpacity.enabled then
         local bounds = Config.Preferences.idleOpacity
-        choices[#choices + 1] = { id='feather-chat:idle-opacity', label='Chat Idle Opacity', control='slider',
+        choices[#choices + 1] = { id='feather-chat:idle-opacity', label=ChatLocale.T('ui_chat_idle_opacity'), control='slider',
             min=bounds.minimum, max=bounds.maximum, step=bounds.step,
             initialValue=state.layout.idleOpacity, preference='idleOpacity' }
     end
@@ -243,6 +243,7 @@ function ChatPresentation.RefreshThemes()
 end
 
 function ChatPresentation.GetState() return State() end
+AddEventHandler('feather-core:locale:changed', ScheduleSettingsRegistration)
 function ChatPresentation.Apply() Apply() end
 
 exports('GetPresentation', function()
@@ -252,10 +253,10 @@ end)
 exports('SetPresentationPreference', function(key, value)
     local setter = type(key) == 'string' and setters[key] or nil
     if not setter then
-        return ChatResults.Err('invalid_input', 'Chat presentation preference is unknown.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_chat_presentation_preference_is_unknown'))
     end
     if not setter(value) then
-        return ChatResults.Err('invalid_preference', 'Chat presentation preference was rejected.')
+        return ChatResults.Err('invalid_preference', ChatLocale.T('error_chat_presentation_preference_was_rejected'))
     end
     return ChatResults.Ok(State())
 end)

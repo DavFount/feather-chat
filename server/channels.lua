@@ -61,14 +61,24 @@ local function RegisterSuggestion(definition, forcedOwner)
     if type(definition) ~= 'table' or type(definition.key) ~= 'string'
         or not definition.key:match('^[a-z][a-z0-9_.%-]+$') or #definition.key > 96
         or type(definition.trigger) ~= 'string'
-        or not definition.trigger:match('^/[a-z][a-z0-9_%-]*$') or #definition.trigger > 32
+        or not definition.trigger:match('^/[a-zA-Z][a-zA-Z0-9_%-]*$') or #definition.trigger > 32
         or type(definition.description) ~= 'string' or #definition.description < 1
         or #definition.description > 160 or (definition.channelKey ~= nil
-        and type(definition.channelKey) ~= 'string') then
-        return ChatResults.Err('invalid_suggestion', 'Suggestion definition is invalid.')
+        and type(definition.channelKey) ~= 'string')
+        or (definition.descriptionKey ~= nil and (type(definition.descriptionKey) ~= 'string'
+            or #definition.descriptionKey < 1 or #definition.descriptionKey > 96))
+        or (definition.accessProvider ~= nil and (type(definition.accessProvider) ~= 'string'
+            or #definition.accessProvider < 1 or #definition.accessProvider > 96)) then
+        return ChatResults.Err('invalid_suggestion', ChatLocale.T('error_suggestion_definition_is_invalid'))
+    end
+    if definition.accessProvider then
+        local provider = accessProviders[definition.accessProvider]
+        if not provider or provider.ownerResource ~= (forcedOwner or Owner()) then
+            return ChatResults.Err('forbidden', ChatLocale.T('error_suggestion_access_provider_must_belong_to_its_owner'))
+        end
     end
     if suggestions[definition.key] then
-        return ChatResults.Err('conflict', 'That suggestion key is already registered.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_that_suggestion_key_is_already_registered'))
     end
     local stored = Copy(definition)
     stored.ownerResource = forcedOwner or Owner()
@@ -80,9 +90,9 @@ end
 
 local function RemoveSuggestion(key, forcedOwner)
     local suggestion = suggestions[key]
-    if not suggestion then return ChatResults.Err('not_found', 'Suggestion is not registered.') end
+    if not suggestion then return ChatResults.Err('not_found', ChatLocale.T('error_suggestion_is_not_registered')) end
     if suggestion.ownerResource ~= (forcedOwner or Owner()) then
-        return ChatResults.Err('forbidden', 'Only the suggestion owner may remove it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_suggestion_owner_may_remove_it'))
     end
     suggestions[key], revision = nil, revision + 1
     TriggerClientEvent('feather-chat:directory:v1', -1, revision)
@@ -91,14 +101,14 @@ end
 
 local function Register(definition, forcedOwner)
     if not ValidDefinition(definition) then
-        return ChatResults.Err('invalid_channel', 'Channel definition is invalid.')
+        return ChatResults.Err('invalid_channel', ChatLocale.T('error_channel_definition_is_invalid'))
     end
     local owner = forcedOwner or Owner()
     if channels[definition.channelKey] then
-        return ChatResults.Err('conflict', 'That channel key is already registered.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_that_channel_key_is_already_registered'))
     end
     for _, alias in ipairs(definition.input.aliases) do
-        if aliases[alias] then return ChatResults.Err('conflict', 'That channel alias is already registered.') end
+        if aliases[alias] then return ChatResults.Err('conflict', ChatLocale.T('error_that_channel_alias_is_already_registered')) end
     end
     local stored = Copy(definition)
     stored.ownerResource, stored.revision = owner, 1
@@ -112,9 +122,9 @@ end
 
 local function Remove(channelKey, forcedOwner)
     local channel = channels[channelKey]
-    if not channel then return ChatResults.Err('not_found', 'Channel is not registered.') end
+    if not channel then return ChatResults.Err('not_found', ChatLocale.T('error_channel_is_not_registered')) end
     if channel.ownerResource ~= (forcedOwner or Owner()) then
-        return ChatResults.Err('forbidden', 'Only the channel owner may remove it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_channel_owner_may_remove_it'))
     end
     for _, alias in ipairs(channel.input.aliases) do aliases[alias] = nil end
     channels[channelKey], revision = nil, revision + 1
@@ -125,27 +135,27 @@ end
 
 local function Update(channelKey, patch, expectedRevision)
     local channel = channels[channelKey]
-    if not channel then return ChatResults.Err('not_found', 'Channel is not registered.') end
+    if not channel then return ChatResults.Err('not_found', ChatLocale.T('error_channel_is_not_registered')) end
     if channel.ownerResource ~= Owner() then
-        return ChatResults.Err('forbidden', 'Only the channel owner may update it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_channel_owner_may_update_it'))
     end
     if tonumber(expectedRevision) ~= channel.revision or type(patch) ~= 'table' then
-        return ChatResults.Err('conflict', 'Channel revision changed.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_channel_revision_changed'))
     end
     local allowed = { label=true, shortLabel=true, description=true, visibility=true,
         presentation=true, input=true, accessProvider=true, routing=true, radius=true }
     local candidate = Copy(channel)
     for key, value in pairs(patch) do
-        if not allowed[key] then return ChatResults.Err('invalid_input', 'Channel patch contains an unknown field.') end
+        if not allowed[key] then return ChatResults.Err('invalid_input', ChatLocale.T('error_channel_patch_contains_an_unknown_field')) end
         candidate[key] = Copy(value)
     end
     candidate.ownerResource, candidate.revision = nil, nil
-    if not ValidDefinition(candidate) then return ChatResults.Err('invalid_channel', 'Channel patch is invalid.') end
+    if not ValidDefinition(candidate) then return ChatResults.Err('invalid_channel', ChatLocale.T('error_channel_patch_is_invalid')) end
     for _, alias in ipairs(channel.input.aliases) do aliases[alias] = nil end
     for _, alias in ipairs(candidate.input.aliases) do
         if aliases[alias] and aliases[alias] ~= channelKey then
             for _, original in ipairs(channel.input.aliases) do aliases[original] = channelKey end
-            return ChatResults.Err('conflict', 'That channel alias is already registered.')
+            return ChatResults.Err('conflict', ChatLocale.T('error_that_channel_alias_is_already_registered'))
         end
     end
     candidate.ownerResource, candidate.revision = channel.ownerResource, channel.revision + 1
@@ -166,20 +176,20 @@ local function CallProvider(channel, method, request)
     if not channel.accessProvider then return ChatResults.Ok({ allowed=true }) end
     local implementation = Provider(channel.accessProvider)
     local callback = type(implementation) == 'table' and implementation[method] or nil
-    if callback == nil then return ChatResults.Err('provider_unavailable', 'Channel access is unavailable.') end
+    if callback == nil then return ChatResults.Err('provider_unavailable', ChatLocale.T('error_channel_access_is_unavailable')) end
     local called, result = pcall(callback, request)
     if not called or type(result) ~= 'table' or type(result.ok) ~= 'boolean' then
-        return ChatResults.Err('provider_unavailable', 'Channel access is unavailable.')
+        return ChatResults.Err('provider_unavailable', ChatLocale.T('error_channel_access_is_unavailable'))
     end
     return result
 end
 
 local function RegisterAccessProvider(name, implementation)
     if type(name) ~= 'string' or #name < 1 or #name > 96 or type(implementation) ~= 'table' then
-        return ChatResults.Err('invalid_input', 'Access provider registration is invalid.')
+        return ChatResults.Err('invalid_input', ChatLocale.T('error_access_provider_registration_is_invalid'))
     end
     if accessProviders[name] then
-        return ChatResults.Err('conflict', 'That access provider is already registered.')
+        return ChatResults.Err('conflict', ChatLocale.T('error_that_access_provider_is_already_registered'))
     end
 
     local owner = Owner()
@@ -187,11 +197,11 @@ local function RegisterAccessProvider(name, implementation)
         local registered = accessProviders[name]
         local callback = registered and registered.implementation[method] or nil
         if callback == nil then
-            return ChatResults.Err('provider_unavailable', 'Channel access is unavailable.')
+            return ChatResults.Err('provider_unavailable', ChatLocale.T('error_channel_access_is_unavailable'))
         end
         local called, result = pcall(callback, request)
         if not called or type(result) ~= 'table' or type(result.ok) ~= 'boolean' then
-            return ChatResults.Err('provider_unavailable', 'Channel access is unavailable.')
+            return ChatResults.Err('provider_unavailable', ChatLocale.T('error_channel_access_is_unavailable'))
         end
         return result
     end
@@ -208,9 +218,9 @@ end
 
 local function RemoveAccessProvider(name, forcedOwner)
     local registered = accessProviders[name]
-    if not registered then return ChatResults.Err('not_found', 'Access provider is not registered.') end
+    if not registered then return ChatResults.Err('not_found', ChatLocale.T('error_access_provider_is_not_registered')) end
     if registered.ownerResource ~= (forcedOwner or Owner()) then
-        return ChatResults.Err('forbidden', 'Only the access provider owner may remove it.')
+        return ChatResults.Err('forbidden', ChatLocale.T('error_only_the_access_provider_owner_may_remove_it'))
     end
     local result = exports['feather-core']:UnregisterProvider('chat-channel-access', name)
     if type(result) == 'table' and result.ok == true then accessProviders[name] = nil end
@@ -219,11 +229,11 @@ end
 
 function ChatChannels.Start()
     local builtins = {
-        { channelKey='local.say', label='Say', visibility='public', routing='proximity', radius='say',
+        { channelKey='local.say', label=ChatLocale.T('ui_say'), visibility='public', routing='proximity', radius='say',
             presentation={variant='speech',accentToken='channel.speech'}, input={aliases={'/say'},maximumLength=Config.Limits.maxMessageBytes} },
-        { channelKey='local.whisper', label='Whisper', visibility='public', routing='proximity', radius='whisper',
+        { channelKey='local.whisper', label=ChatLocale.T('ui_whisper'), visibility='public', routing='proximity', radius='whisper',
             presentation={variant='whisper',accentToken='channel.whisper'}, input={aliases={'/whisper'},maximumLength=Config.Limits.maxMessageBytes} },
-        { channelKey='local.shout', label='Shout', visibility='public', routing='proximity', radius='shout',
+        { channelKey='local.shout', label=ChatLocale.T('ui_shout'), visibility='public', routing='proximity', radius='shout',
             presentation={variant='shout',accentToken='channel.shout'}, input={aliases={'/shout'},maximumLength=Config.Limits.maxMessageBytes} },
         { channelKey='roleplay.me', label='/me', visibility='public', routing='proximity', radius='roleplay', kind='action',
             presentation={variant='action',accentToken='channel.action'}, input={aliases={'/me'},maximumLength=Config.Limits.maxMessageBytes} },
@@ -235,7 +245,7 @@ function ChatChannels.Start()
         if not result.ok then return result end
         local suggestion = RegisterSuggestion({
             key='builtin.' .. definition.channelKey, trigger=definition.input.aliases[1],
-            description=('Send to %s'):format(definition.label), channelKey=definition.channelKey
+            description=ChatLocale.T('ui_send_to_channel'):gsub('{channel}', function() return definition.label end), channelKey=definition.channelKey
         }, resourceName)
         if not suggestion.ok then return suggestion end
     end
@@ -251,7 +261,7 @@ function ChatChannels.RegisterRoutes()
         windowMs=2000, maxCalls=4, maxPayloadBytes=64, maxDepth=2, maxNodes=4,
         validatePayload=function(payload)
             return type(payload) == 'table' and next(payload) == nil,
-                ChatResults.Err('invalid_input', 'No channel-list fields are accepted.')
+                ChatResults.Err('invalid_input', ChatLocale.T('error_no_channel_list_fields_are_accepted'))
         end
     })
 end
@@ -281,10 +291,15 @@ function ChatChannels.List(actor)
     table.sort(list, function(a, b) return a.channelKey < b.channelKey end)
     local suggestionList = {}
     for _, suggestion in pairs(suggestions) do
-        if suggestion.channelKey == nil or visible[suggestion.channelKey] then
+        local include = suggestion.channelKey == nil or visible[suggestion.channelKey]
+        if include and suggestion.accessProvider then
+            local access = CallProvider(suggestion, 'CanView', { actor=actor, suggestionKey=suggestion.key })
+            include = access.ok and access.value and access.value.allowed == true
+        end
+        if include then
             suggestionList[#suggestionList + 1] = {
                 key=suggestion.key, trigger=suggestion.trigger,
-                description=suggestion.description, channelKey=suggestion.channelKey
+                description=suggestion.description, descriptionKey=suggestion.descriptionKey, channelKey=suggestion.channelKey
             }
         end
     end
@@ -298,6 +313,22 @@ exports('UnregisterChannel', function(channelKey) return Remove(channelKey) end)
 exports('RegisterChannelAccessProvider', RegisterAccessProvider)
 exports('UnregisterChannelAccessProvider', function(name) return RemoveAccessProvider(name) end)
 exports('RegisterSuggestion', function(definition) return RegisterSuggestion(definition) end)
+
+function ChatChannels.SuggestionSmoke()
+    local definition = { key='chat.suggestion.smoke', trigger='/SuggestionSmoke', description='Temporary suggestion smoke' }
+    local registered = RegisterSuggestion(definition, 'chat-suggestion-smoke')
+    local tests = {
+        { 'mixed-case command accepted', registered.ok },
+        { 'duplicate key rejected', not RegisterSuggestion(definition, 'chat-suggestion-smoke').ok },
+        { 'foreign owner removal denied', not RemoveSuggestion(definition.key, 'another-owner').ok },
+        { 'missing access provider denied', not RegisterSuggestion({ key='chat.suggestion.protected-smoke',
+            trigger='/protected_smoke', description='Protected fixture', accessProvider='missing.smoke' }, 'chat-suggestion-smoke').ok }
+    }
+    tests[#tests + 1] = { 'owner cleanup succeeds', RemoveSuggestion(definition.key, 'chat-suggestion-smoke').ok }
+    tests[#tests + 1] = { 'registration recovers after cleanup', RegisterSuggestion(definition, 'chat-suggestion-smoke').ok }
+    RemoveSuggestion(definition.key, 'chat-suggestion-smoke')
+    return tests
+end
 exports('RemoveSuggestion', function(key) return RemoveSuggestion(key) end)
 
 function ChatChannels.Smoke()

@@ -62,10 +62,13 @@ button, textarea { font: inherit; }
 }
 
 .channel-tabs { display: flex; gap: 0.35rem; padding: 0.45rem; border-bottom: 1px solid var(--border); }
+.channel-filters { display: flex; gap: 0.35rem; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--border) var(--surface); }
+.channel-tools { display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0; }
+.channel-tabs .channel { white-space: nowrap; flex-shrink: 0; }
 .channel { border: 0; border-radius: 4px; padding: 0.3rem 0.65rem; background: transparent; color: var(--muted); cursor: pointer; }
 .channel.active { background: rgba(217, 180, 111, 0.15); color: var(--accent); }
 .channel:hover { background: rgba(217, 180, 111, 0.08); color: var(--text); }
-.ignored-players-button { margin-left: auto; border: 1px solid var(--border); background: var(--surface); }
+.ignored-players-button { border: 1px solid var(--border); background: var(--surface); }
 .channel:focus-visible, .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .empty-state { display: flex; flex-direction: column; gap: 0.25rem; min-height: 7rem; padding: 1rem; }
 .empty-state span { color: var(--muted); font-family: system-ui, sans-serif; font-size: 0.82em; }
